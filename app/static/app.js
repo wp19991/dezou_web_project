@@ -63,6 +63,7 @@ let lastEventId = 0;
 let pollHandle = null;
 let currentState = null;
 let selectedActionSpec = null;
+let seatNameDrafts = [];
 
 const banner = document.getElementById("banner");
 const sessionMeta = document.getElementById("sessionMeta");
@@ -78,6 +79,9 @@ const replayView = document.getElementById("replayView");
 const speakerId = document.getElementById("speakerId");
 const selectedActionHint = document.getElementById("selectedActionHint");
 const submitAmountAction = document.getElementById("submitAmountAction");
+const createSessionForm = document.getElementById("createSessionForm");
+const seatCountInput = createSessionForm.querySelector('input[name="seat_count"]');
+const seatNamesList = document.getElementById("seatNamesList");
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -105,6 +109,28 @@ function showBanner(message) {
   banner.classList.remove("hidden");
   clearTimeout(showBanner.timer);
   showBanner.timer = setTimeout(() => banner.classList.add("hidden"), 2600);
+}
+
+function defaultSeatName(index) {
+  return `玩家 ${index + 1}`;
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString("zh-CN", {
+    hour12: false,
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function actionLabel(action) {
@@ -140,6 +166,40 @@ function seatDisplayName(seatId, seats = []) {
 function seatDisplayWithNo(seatId, seats = []) {
   const seat = seatById(seatId, seats);
   return seat ? `${seat.display_name} · ${seatNoLabel(seat.seat_no)}` : seatId;
+}
+
+function syncSeatNameDrafts() {
+  Array.from(seatNamesList.querySelectorAll("input[data-seat-index]")).forEach((input) => {
+    const seatIndex = Number(input.dataset.seatIndex);
+    seatNameDrafts[seatIndex] = input.value.trim() || defaultSeatName(seatIndex);
+  });
+}
+
+function renderSeatNameInputs() {
+  syncSeatNameDrafts();
+  const count = Math.min(9, Math.max(2, Number(seatCountInput.value) || 2));
+  seatNamesList.innerHTML = Array.from({ length: count }, (_, index) => {
+    const value = seatNameDrafts[index] || defaultSeatName(index);
+    return `
+      <label class="seat-name-item">
+        <span>🪑 ${index + 1} 号位</span>
+        <input
+          type="text"
+          maxlength="32"
+          value="${escapeHtml(value)}"
+          data-seat-index="${index}"
+          placeholder="${defaultSeatName(index)}"
+        >
+      </label>
+    `;
+  }).join("");
+}
+
+function collectSeatNames() {
+  syncSeatNameDrafts();
+  return Array.from({ length: Math.min(9, Math.max(2, Number(seatCountInput.value) || 2)) }, (_, index) => {
+    return seatNameDrafts[index] || defaultSeatName(index);
+  });
 }
 
 function showActionHint(message) {
@@ -483,7 +543,7 @@ function renderSpeakerOptions(hand) {
   }
 }
 
-function eventSummary(event) {
+function eventSummary(event, seats = currentState?.current_hand?.seats || []) {
   const payload = event.payload || {};
   switch (event.event_type) {
     case "session_created":
@@ -491,7 +551,7 @@ function eventSummary(event) {
     case "hand_started":
       return `🃏 第 ${payload.hand_no} 手开始，庄位 ${seatNoLabel(payload.dealer_seat)}，本手种子=${payload.seed}。`;
     case "waiting_actor_action":
-      return `🎯 轮到 ${seatDisplayName(payload.actor_id, currentState?.current_hand?.seats || [])} 在 ${streetLabel(payload.street)} 行动，需跟注 ${payload.to_call}。`;
+      return `🎯 轮到 ${seatDisplayName(payload.actor_id, seats)} 在 ${streetLabel(payload.street)} 行动，需跟注 ${payload.to_call}。`;
     case "board_dealt":
       return `🃏 ${streetLabel(payload.street)} 发牌：${(payload.cards || []).join(" ")}。`;
     case "street_changed":
@@ -499,15 +559,15 @@ function eventSummary(event) {
     case "showdown_started":
       return "🪞 进入摊牌阶段。";
     case "hand_ended":
-      return `🏁 本手结束，底池 ${payload.pot_total}，赢家：${winnerSummaryText(payload.winners || [], currentState?.current_hand?.seats || [])}。`;
+      return `🏁 本手结束，底池 ${payload.pot_total}，赢家：${winnerSummaryText(payload.winners || [], seats)}。`;
     case "blind_posted":
-      return `🪙 ${seatDisplayName(payload.actor_id, currentState?.current_hand?.seats || [])} 投入盲注 ${payload.amount}。`;
+      return `🪙 ${seatDisplayName(payload.actor_id, seats)} 投入盲注 ${payload.amount}。`;
     case "action_applied":
-      return `${actionLabel(payload.action)} · ${seatDisplayName(payload.actor_id, currentState?.current_hand?.seats || [])} 在 ${streetLabel(payload.street)} 执行动作${payload.amount ? ` ${payload.amount}` : ""}。`;
+      return `${actionLabel(payload.action)} · ${seatDisplayName(payload.actor_id, seats)} 在 ${streetLabel(payload.street)} 执行动作${payload.amount ? ` ${payload.amount}` : ""}。`;
     case "pot_awarded":
-      return `🏆 ${seatDisplayName(payload.seat_id, currentState?.current_hand?.seats || [])} 获得 ${payload.amount}。`;
+      return `🏆 ${seatDisplayName(payload.seat_id, seats)} 获得 ${payload.amount}。`;
     case "chat_sent":
-      return `💬 ${seatDisplayName(payload.speaker_id, currentState?.current_hand?.seats || [])}: ${payload.text}`;
+      return `💬 ${seatDisplayName(payload.speaker_id, seats)}: ${payload.text}`;
     default:
       return `${EVENT_META[event.event_type]?.emoji || "🎲"} ${EVENT_META[event.event_type]?.label || event.event_type}`;
   }
@@ -520,10 +580,10 @@ function appendTimeline(event) {
   node.innerHTML = `
     <div class="timeline-top">
       <span class="timeline-tag">${meta.emoji} ${escapeHtml(meta.label)}</span>
-      <span class="timeline-time">#${event.event_id} · ${escapeHtml(event.created_at)}</span>
+      <span class="timeline-time">#${event.event_id} · ${escapeHtml(formatDateTime(event.created_at))}</span>
     </div>
     <div class="timeline-title">${escapeHtml(channelLabel(event.channel))}</div>
-    <div class="event-summary">${escapeHtml(eventSummary(event))}</div>
+    <div class="event-summary">${escapeHtml(eventSummary(event, currentState?.current_hand?.seats || []))}</div>
     <details class="event-detail-wrap">
       <summary>查看事件详情</summary>
       <pre class="event-detail">${escapeHtml(JSON.stringify(event.payload, null, 2))}</pre>
@@ -582,41 +642,14 @@ async function refreshHistory() {
 }
 
 function renderReplay(data) {
-  const actions = (data.actions || [])
-    .map(
-      (action, index) => `
-        <div class="replay-card">
-          <div class="replay-section-head">
-            <strong>${index + 1}. ${actionLabel(action.action)}</strong>
-            <span class="replay-meta">${escapeHtml(streetLabel(action.street))}</span>
-          </div>
-          <div class="action-line">🎯 ${escapeHtml(seatDisplayName(action.actor_id, data.final_state?.seats || []))}${action.amount ? ` · 金额 ${action.amount}` : ""}</div>
-        </div>
-      `
-    )
-    .join("");
-
-  const chats = (data.chat_messages || [])
-    .map(
-      (chat, index) => `
-        <div class="replay-card">
-          <div class="replay-section-head">
-            <strong>💬 聊天 ${index + 1}</strong>
-            <span class="replay-meta">${escapeHtml(seatDisplayName(chat.speaker_id, data.final_state?.seats || []))}</span>
-          </div>
-          <div class="chat-bubble">${escapeHtml(chat.text)}</div>
-        </div>
-      `
-    )
-    .join("");
-
+  const replaySeats = data.final_state?.seats || [];
   const winners = (data.winners || [])
     .map(
       (winner) =>
-        `<span class="badge">🏆 ${escapeHtml(seatDisplayName(winner.seat_id, data.final_state?.seats || []))} +${winner.win_amount}</span>`
+        `<span class="badge">🏆 ${escapeHtml(seatDisplayName(winner.seat_id, replaySeats))} +${winner.win_amount}</span>`
     )
     .join("");
-  const showdownSeats = ((data.final_state && data.final_state.seats) || [])
+  const showdownSeats = replaySeats
     .filter((seat) => seat.showdown_competing)
     .map(
       (seat) => `
@@ -632,12 +665,27 @@ function renderReplay(data) {
       `
     )
     .join("");
+  const replayTimeline = (data.timeline || [])
+    .map((item) => {
+      const meta = EVENT_META[item.event_type] || { emoji: "🎲", label: item.event_type };
+      return `
+        <div class="timeline-item replay-timeline-item">
+          <div class="timeline-top">
+            <span class="timeline-tag">${meta.emoji} ${escapeHtml(meta.label)}</span>
+            <span class="timeline-time">#${item.event_id} · ${escapeHtml(formatDateTime(item.created_at))}</span>
+          </div>
+          <div class="timeline-title">${escapeHtml(channelLabel(item.channel))}</div>
+          <div class="event-summary">${escapeHtml(eventSummary(item, replaySeats))}</div>
+        </div>
+      `;
+    })
+    .join("");
 
   const stacks = Object.entries(data.final_stacks || {})
     .map(
       ([seatId, stack]) => `
         <div class="replay-card">
-          <div class="stack-line">💵 <strong>${escapeHtml(seatDisplayName(seatId, data.final_state?.seats || []))}</strong> · ${stack}</div>
+          <div class="stack-line">💵 <strong>${escapeHtml(seatDisplayName(seatId, replaySeats))}</strong> · ${stack}</div>
         </div>
       `
     )
@@ -668,17 +716,10 @@ function renderReplay(data) {
     </div>
     <div class="replay-card">
       <div class="replay-section-head">
-        <strong>⚡ 动作序列</strong>
-        <span class="replay-meta">${(data.actions || []).length} 条</span>
+        <strong>🕒 对局时间线</strong>
+        <span class="replay-meta">${(data.timeline || []).length} 条事件</span>
       </div>
-      <div class="replay-list">${actions || '<div class="empty-state">暂无动作。</div>'}</div>
-    </div>
-    <div class="replay-card">
-      <div class="replay-section-head">
-        <strong>💬 聊天记录</strong>
-        <span class="replay-meta">${(data.chat_messages || []).length} 条</span>
-      </div>
-      <div class="replay-list">${chats || '<div class="empty-state">本手没有聊天。</div>'}</div>
+      <div class="replay-list replay-timeline">${replayTimeline || '<div class="empty-state">暂无回放事件。</div>'}</div>
     </div>
     <div class="replay-card">
       <div class="replay-section-head">
@@ -747,7 +788,7 @@ submitAmountAction.addEventListener("click", () => {
   submitAction(selectedActionSpec, Number(actionAmount.value)).catch((error) => showBanner(error.message));
 });
 
-document.getElementById("createSessionForm").addEventListener("submit", async (event) => {
+createSessionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
   const payload = {
@@ -757,6 +798,7 @@ document.getElementById("createSessionForm").addEventListener("submit", async (e
     big_blind: Number(form.get("big_blind")),
     starting_stack: Number(form.get("starting_stack")),
     seed: form.get("seed") === "" ? null : Number(form.get("seed")),
+    seat_names: collectSeatNames(),
   };
   try {
     const data = await api("/api/v1/sessions", {
@@ -823,3 +865,7 @@ document.getElementById("refreshBtn").addEventListener("click", () => {
   refreshState().catch((error) => showBanner(error.message));
   refreshHistory().catch((error) => showBanner(error.message));
 });
+
+seatCountInput.addEventListener("input", renderSeatNameInputs);
+seatNamesList.addEventListener("input", syncSeatNameDrafts);
+renderSeatNameInputs();

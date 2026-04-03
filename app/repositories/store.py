@@ -454,6 +454,24 @@ class Store:
                 response,
             )
 
+    def refresh_replay_chat_count(self, hand_id: str) -> None:
+        replay_row = self.fetch_replay_row(hand_id)
+        if not replay_row:
+            return
+        summary = json_loads(replay_row["summary_json"])
+        summary["chat_count"] = self.count_hand_chat_events(hand_id)
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    UPDATE hand_replays
+                    SET summary_json = :summary_json
+                    WHERE hand_id = :hand_id
+                    """
+                ),
+                {"hand_id": hand_id, "summary_json": json_dumps(summary)},
+            )
+
     def _insert_events(self, conn: Any, events: Sequence[dict[str, Any]]) -> list[int]:
         event_ids: list[int] = []
         for event in events:

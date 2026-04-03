@@ -392,6 +392,7 @@ class TableKernel:
                     "is_all_in": tracker.is_all_in,
                     "in_hand": tracker.in_hand,
                     "hole_cards": list(tracker.hole_cards),
+                    "hole_cards_visible": True,
                     "showdown_competing": tracker.showdown_competing,
                     "best_hand_label": tracker.best_hand_label,
                     "best_hand_cards": list(tracker.best_hand_cards),

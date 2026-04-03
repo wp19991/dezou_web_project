@@ -28,10 +28,13 @@ class CreateSessionRequest(BaseModel):
     def validate_seat_names(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return value
-        for item in value:
+        normalized = [item.strip() for item in value]
+        for item in normalized:
             if not (1 <= len(item) <= 32):
                 raise ValueError("seat name length must be between 1 and 32")
-        return value
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("seat names must be unique")
+        return normalized
 
 
 class StartHandRequest(BaseModel):
@@ -41,10 +44,17 @@ class StartHandRequest(BaseModel):
 
 
 class SubmitActionRequest(BaseModel):
-    actor_id: str = Field(pattern=r"^seat_[0-8]$")
+    actor_id: str | None = Field(default=None, pattern=r"^seat_[0-8]$")
+    actor_name: str | None = Field(default=None, min_length=1, max_length=32)
     action: str
     amount: int | None = Field(default=None, ge=0)
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_actor_identity(self) -> "SubmitActionRequest":
+        if not self.actor_id and not self.actor_name:
+            raise ValueError("actor_id or actor_name is required")
+        return self
 
     @field_validator("action")
     @classmethod
@@ -56,6 +66,13 @@ class SubmitActionRequest(BaseModel):
 
 
 class SendChatRequest(BaseModel):
-    speaker_id: str = Field(pattern=r"^seat_[0-8]$")
+    speaker_id: str | None = Field(default=None, pattern=r"^seat_[0-8]$")
+    speaker_name: str | None = Field(default=None, min_length=1, max_length=32)
     text: str = Field(min_length=1, max_length=200)
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_speaker_identity(self) -> "SendChatRequest":
+        if not self.speaker_id and not self.speaker_name:
+            raise ValueError("speaker_id or speaker_name is required")
+        return self

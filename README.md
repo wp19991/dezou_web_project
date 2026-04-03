@@ -22,6 +22,7 @@ pytest
 
 - `app/`: 后端应用、规则内核、前端模板与静态资源
 - `docs/`: 实施与验收文档
+- `docs/player-api.md`: 面向玩家轮询客户端的接入文档
 - `tests/`: 自动化测试
 - `poker_table_openapi.yaml`: 接口契约
 - `poker_table_sqlite_schema.sql`: SQLite 表结构

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -44,7 +45,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             code="INVALID_REQUEST",
             message="请求参数校验失败",
             status_code=422,
-            details={"errors": exc.errors()},
+            details={"errors": jsonable_encoder(exc.errors())},
         )
         return JSONResponse(status_code=422, content=error_payload(error))
 
@@ -57,4 +58,3 @@ def register_exception_handlers(app: FastAPI) -> None:
             details={"type": exc.__class__.__name__},
         )
         return JSONResponse(status_code=500, content=error_payload(error))
-

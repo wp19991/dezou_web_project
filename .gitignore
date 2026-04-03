@@ -1,0 +1,43 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.coverage
+.coverage.*
+.ruff_cache
+agent_history.gif
+static/browser_history/*.gif
+
+log/
+log/*
+
+fastapi_agent_deerflow_chat/agents
+fastapi_agent_deerflow_chat/logs
+fastapi_agent_deerflow_chat/threads
+fastapi_agent_deerflow_chat/checkpoints.*
+
+fastapi_agent_deerflow_chat/test_server.py
+fastapi_agent_deerflow_chat/config.yaml
+fastapi_agent_deerflow_chat/thread_registry.json
+
+.idea
+
+# Virtual environments
+.venv
+venv/
+
+uv.lock
+
+# User config file
+config.yaml
+
+# Langgraph
+.langgraph_api
+
+# Claude Code settings
+.claude/settings.local.json
+.test_artifacts
+pytest-*

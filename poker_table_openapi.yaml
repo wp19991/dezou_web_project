@@ -87,6 +87,7 @@ paths:
       operationId: getSessionState
       parameters:
         - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/ViewerName'
       responses:
         '200':
           description: 查询成功
@@ -202,6 +203,11 @@ paths:
                   action: raise
                   amount: 300
                   request_id: req-act-055
+              actorName:
+                value:
+                  actor_name: 玩家4
+                  action: call
+                  request_id: req-act-057
               allIn:
                 value:
                   actor_id: seat_4
@@ -252,6 +258,11 @@ paths:
                   speaker_id: seat_2
                   text: 这口我会跟到底。
                   request_id: req-chat-001
+              speakerName:
+                value:
+                  speaker_name: 玩家2
+                  text: 我已经弃牌了，但继续聊天。
+                  request_id: req-chat-002
       responses:
         '201':
           description: 发送成功
@@ -317,6 +328,7 @@ paths:
       operationId: getReplay
       parameters:
         - $ref: '#/components/parameters/HandId'
+        - $ref: '#/components/parameters/ViewerName'
       responses:
         '200':
           description: 查询成功
@@ -357,6 +369,15 @@ components:
         type: string
         minLength: 1
         maxLength: 128
+    ViewerName:
+      name: viewer_name
+      in: query
+      required: false
+      description: 指定玩家视角；返回该玩家可见的 hole cards 与 viewer 信息。
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 32
 
   schemas:
     ApiOk:
@@ -528,6 +549,7 @@ components:
             - is_all_in
             - in_hand
             - hole_cards
+            - hole_cards_visible
             - showdown_competing
             - is_winner
             - win_amount
@@ -549,10 +571,13 @@ components:
               type: boolean
             hole_cards:
               type: array
-              minItems: 2
+              minItems: 0
               maxItems: 2
               items:
                 $ref: '#/components/schemas/Card'
+            hole_cards_visible:
+              type: boolean
+              description: 当前 viewer 是否能看到该座位的 hole cards。
             showdown_competing:
               type: boolean
             best_hand_label:
@@ -632,6 +657,7 @@ components:
           type: array
           minItems: 2
           maxItems: 9
+          description: 玩家显示名称列表，长度必须等于 seat_count，且名称不能重复。
           items:
             type: string
             minLength: 1
@@ -774,6 +800,10 @@ components:
         - pot_total
         - board_cards
         - seats
+        - turn_order
+        - action_history
+        - chat_messages
+        - timeline
       properties:
         hand_id:
           type: string
@@ -837,6 +867,26 @@ components:
           maxItems: 9
           items:
             $ref: '#/components/schemas/SeatState'
+        turn_order:
+          type: array
+          description: 当前手的座位顺序，按牌桌顺时针并让庄位排在最后。
+          items:
+            $ref: '#/components/schemas/TurnOrderItem'
+        action_history:
+          type: array
+          description: 当前这手已经发生的动作历史；开始下一手后会清空。
+          items:
+            $ref: '#/components/schemas/ReplayActionItem'
+        chat_messages:
+          type: array
+          description: 当前这手的聊天记录；开始下一手后会清空。
+          items:
+            $ref: '#/components/schemas/ReplayChatItem'
+        timeline:
+          type: array
+          description: 当前这手从开始到现在的事件时间线；开始下一手后会清空。
+          items:
+            $ref: '#/components/schemas/ReplayTimelineItem'
         available_actions:
           type: array
           items:
@@ -856,9 +906,54 @@ components:
           allOf:
             - $ref: '#/components/schemas/CurrentHandState'
           nullable: true
+        viewer:
+          allOf:
+            - $ref: '#/components/schemas/ViewerState'
+          nullable: true
         last_event_id:
           type: integer
           minimum: 0
+
+    ViewerState:
+      type: object
+      required:
+        - viewer_name
+        - viewer_seat_id
+        - viewer_seat_no
+        - is_actor
+        - can_act
+        - is_folded
+        - in_hand
+      properties:
+        viewer_name:
+          type: string
+        viewer_seat_id:
+          type: string
+        viewer_seat_no:
+          type: integer
+          minimum: 0
+          maximum: 8
+        is_actor:
+          type: boolean
+        can_act:
+          type: boolean
+        is_folded:
+          type: boolean
+        in_hand:
+          type: boolean
+
+    TurnOrderItem:
+      type: object
+      required: [seat_id, display_name, seat_no]
+      properties:
+        seat_id:
+          type: string
+        display_name:
+          type: string
+        seat_no:
+          type: integer
+          minimum: 0
+          maximum: 8
 
     SessionStateResponse:
       allOf:
@@ -871,11 +966,18 @@ components:
 
     SubmitActionRequest:
       type: object
-      required: [actor_id, action]
+      required: [action]
+      description: 需要提供 actor_id 或 actor_name，至少一个。
       properties:
         actor_id:
           type: string
           pattern: '^seat_[0-8]$'
+          nullable: true
+        actor_name:
+          type: string
+          minLength: 1
+          maxLength: 32
+          nullable: true
         action:
           $ref: '#/components/schemas/ActionName'
         amount:
@@ -932,11 +1034,18 @@ components:
 
     SendChatRequest:
       type: object
-      required: [speaker_id, text]
+      required: [text]
+      description: 需要提供 speaker_id 或 speaker_name，至少一个。
       properties:
         speaker_id:
           type: string
           pattern: '^seat_[0-8]$'
+          nullable: true
+        speaker_name:
+          type: string
+          minLength: 1
+          maxLength: 32
+          nullable: true
         text:
           type: string
           minLength: 1
@@ -1090,12 +1199,20 @@ components:
 
     ReplayActionItem:
       type: object
-      required: [seq, actor_id, street, action]
+      required: [seq, event_id, created_at, actor_id, actor_name, street, action]
       properties:
         seq:
           type: integer
           minimum: 1
+        event_id:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
         actor_id:
+          type: string
+        actor_name:
           type: string
         street:
           $ref: '#/components/schemas/Street'
@@ -1108,15 +1225,44 @@ components:
 
     ReplayChatItem:
       type: object
-      required: [seq, speaker_id, text]
+      required: [seq, event_id, created_at, speaker_id, speaker_name, text]
       properties:
         seq:
           type: integer
           minimum: 1
+        event_id:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
         speaker_id:
+          type: string
+        speaker_name:
           type: string
         text:
           type: string
+
+    ReplayTimelineItem:
+      type: object
+      required: [seq, event_id, channel, event_type, created_at, payload]
+      properties:
+        seq:
+          type: integer
+          minimum: 1
+        event_id:
+          type: integer
+          minimum: 1
+        channel:
+          $ref: '#/components/schemas/EventChannel'
+        event_type:
+          $ref: '#/components/schemas/EventType'
+        created_at:
+          type: string
+          format: date-time
+        payload:
+          type: object
+          additionalProperties: true
 
     ReplayData:
       type: object
@@ -1132,6 +1278,7 @@ components:
         - final_stacks
         - actions
         - chat_messages
+        - timeline
         - final_state
       properties:
         hand_id:
@@ -1169,6 +1316,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ReplayChatItem'
+        timeline:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReplayTimelineItem'
         final_state:
           type: object
           additionalProperties: true

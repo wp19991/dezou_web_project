@@ -42,6 +42,13 @@
           <label>牌桌随机种子
             <input name="seed" type="number" min="0" value="1234">
           </label>
+          <div class="seat-name-editor">
+            <div class="seat-name-head">
+              <strong>👥 玩家姓名</strong>
+              <span>会随座位数自动增减，也可以单独改名</span>
+            </div>
+            <div id="seatNamesList" class="seat-name-list"></div>
+          </div>
           <button type="submit">🪑 创建牌桌</button>
         </form>
       </article>
@@ -123,7 +130,7 @@
       <article class="panel">
         <div class="panel-title">
           <h2>🎞️ 回放</h2>
-          <span class="panel-note">动作、聊天、结算一屏可读</span>
+          <span class="panel-note">按时间查看动作、聊天和摊牌过程</span>
         </div>
         <div id="replayView" class="scroll-panel replay-view">
           <div class="empty-state">🪄 选择一手已结束牌局查看回放。</div>

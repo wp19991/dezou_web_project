@@ -40,8 +40,12 @@ async def create_session(request: Request, payload: CreateSessionRequest) -> dic
 
 
 @router.get("/api/v1/sessions/{session_id}/state")
-async def get_state(request: Request, session_id: str) -> dict:
-    return await service(request).get_state(session_id)
+async def get_state(
+    request: Request,
+    session_id: str,
+    viewer_name: str | None = Query(default=None, min_length=1, max_length=32),
+) -> dict:
+    return await service(request).get_state(session_id, viewer_name)
 
 
 @router.post("/api/v1/sessions/{session_id}/hands", status_code=201)
@@ -80,5 +84,9 @@ async def list_events(
 
 
 @router.get("/api/v1/replays/{hand_id}")
-async def get_replay(request: Request, hand_id: str) -> dict:
-    return await service(request).get_replay(hand_id)
+async def get_replay(
+    request: Request,
+    hand_id: str,
+    viewer_name: str | None = Query(default=None, min_length=1, max_length=32),
+) -> dict:
+    return await service(request).get_replay(hand_id, viewer_name)

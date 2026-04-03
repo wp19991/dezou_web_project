@@ -1,0 +1,1183 @@
+openapi: 3.1.0
+info:
+  title: Poker Table API
+  version: 1.0.0
+  summary: 网页德州扑克对局系统 API 定义
+  description: |
+    基于完善版《网页德州扑克对局系统开发文档》整理的 OpenAPI 3.1 规范。
+    正式接口前缀为 /api/v1。
+servers:
+  - url: http://localhost:8000
+    description: Local development
+tags:
+  - name: Health
+    description: 服务健康检查
+  - name: Sessions
+    description: 会话与状态查询
+  - name: Hands
+    description: 开始新一手与历史列表
+  - name: Actions
+    description: 提交玩家动作
+  - name: Chat
+    description: 发送聊天消息
+  - name: Events
+    description: 事件流查询
+  - name: Replays
+    description: 单手回放查询
+
+paths:
+  /api/v1/health:
+    get:
+      tags: [Health]
+      summary: 健康检查
+      operationId: getHealth
+      responses:
+        '200':
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/v1/sessions:
+    post:
+      tags: [Sessions]
+      summary: 创建会话
+      operationId: createSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+            examples:
+              basic:
+                value:
+                  session_id: table-demo-001
+                  seat_count: 6
+                  small_blind: 50
+                  big_blind: 100
+                  starting_stack: 10000
+                  seat_names: ["玩家1", "玩家2", "玩家3", "玩家4", "玩家5", "玩家6"]
+                  request_id: req-create-001
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSessionResponse'
+        '409':
+          description: session_id 冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 参数校验失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/sessions/{session_id}/state:
+    get:
+      tags: [Sessions]
+      summary: 获取当前牌桌状态
+      operationId: getSessionState
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStateResponse'
+        '404':
+          description: session 不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/sessions/{session_id}/hands:
+    post:
+      tags: [Hands]
+      summary: 开始新一手牌
+      operationId: startHand
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartHandRequest'
+            examples:
+              basic:
+                value:
+                  dealer_seat: 0
+                  request_id: req-start-001
+      responses:
+        '201':
+          description: 开始成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartHandResponse'
+        '404':
+          description: session 不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 当前阶段不允许开始新手牌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 参数校验失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      tags: [Hands]
+      summary: 获取历史手牌列表
+      operationId: listHands
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: limit
+          in: query
+          required: false
+          description: 每页条数，默认 50，建议范围 1-100
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          required: false
+          description: 偏移量，默认 0
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListHandsResponse'
+        '404':
+          description: session 不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/sessions/{session_id}/actions:
+    post:
+      tags: [Actions]
+      summary: 提交动作
+      operationId: submitAction
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitActionRequest'
+            examples:
+              raise:
+                value:
+                  actor_id: seat_4
+                  action: raise
+                  amount: 300
+                  request_id: req-act-055
+              allIn:
+                value:
+                  actor_id: seat_4
+                  action: all_in
+                  request_id: req-act-056
+      responses:
+        '200':
+          description: 动作已接受并应用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitActionResponse'
+        '404':
+          description: session 或 seat 不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 非当前行动者、动作不合法、金额不合法或阶段冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 参数校验失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/sessions/{session_id}/chat:
+    post:
+      tags: [Chat]
+      summary: 发送聊天消息
+      operationId: sendChat
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendChatRequest'
+            examples:
+              basic:
+                value:
+                  speaker_id: seat_2
+                  text: 这口我会跟到底。
+                  request_id: req-chat-001
+      responses:
+        '201':
+          description: 发送成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendChatResponse'
+        '404':
+          description: session 或 seat 不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: 参数校验失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/sessions/{session_id}/events:
+    get:
+      tags: [Events]
+      summary: 按游标拉取事件流
+      operationId: listEvents
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: since_event_id
+          in: query
+          required: false
+          description: 从指定事件 ID 之后开始返回，默认 0
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: limit
+          in: query
+          required: false
+          description: 返回条数，默认 200，最大 500
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 200
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListEventsResponse'
+        '404':
+          description: session 不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/replays/{hand_id}:
+    get:
+      tags: [Replays]
+      summary: 获取单手回放
+      operationId: getReplay
+      parameters:
+        - $ref: '#/components/parameters/HandId'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetReplayResponse'
+        '404':
+          description: hand 不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 回放尚未生成
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  parameters:
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      description: 会话唯一标识
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+    HandId:
+      name: hand_id
+      in: path
+      required: true
+      description: 手牌唯一标识
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+
+  schemas:
+    ApiOk:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+
+    ApiError:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          const: false
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+
+    ErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    ErrorCode:
+      type: string
+      enum:
+        - SESSION_NOT_FOUND
+        - HAND_NOT_FOUND
+        - INVALID_REQUEST
+        - SESSION_PHASE_INVALID
+        - HAND_ALREADY_RUNNING
+        - ACTOR_TURN_MISMATCH
+        - ACTION_NOT_ALLOWED
+        - AMOUNT_OUT_OF_RANGE
+        - SEAT_NOT_FOUND
+        - REPLAY_NOT_READY
+        - INTERNAL_ERROR
+
+    HealthData:
+      type: object
+      required: [service, status]
+      properties:
+        service:
+          type: string
+          example: poker-table
+        status:
+          type: string
+          enum: [up]
+
+    HealthResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiOk'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/HealthData'
+
+    ErrorResponse:
+      $ref: '#/components/schemas/ApiError'
+
+    SessionPhase:
+      type: string
+      enum:
+        - waiting_start
+        - running
+        - waiting_actor_action
+        - hand_ended
+        - closed
+
+    HandPhase:
+      type: string
+      enum:
+        - running
+        - ended
+
+    Street:
+      type: string
+      enum:
+        - preflop
+        - flop
+        - turn
+        - river
+        - showdown
+
+    ActionName:
+      type: string
+      enum:
+        - fold
+        - check
+        - call
+        - bet
+        - raise
+        - all_in
+
+    EventChannel:
+      type: string
+      enum:
+        - system
+        - action
+        - chat
+
+    SeatStatus:
+      type: string
+      enum:
+        - active
+        - folded
+        - all_in
+        - out
+
+    EventType:
+      type: string
+      enum:
+        - session_created
+        - hand_started
+        - street_changed
+        - waiting_actor_action
+        - board_dealt
+        - showdown_started
+        - hand_ended
+        - blind_posted
+        - action_applied
+        - folded
+        - checked
+        - called
+        - bet_to
+        - raised_to
+        - all_in
+        - pot_awarded
+        - chat_sent
+
+    SeatPublic:
+      type: object
+      required: [seat_id, seat_no, display_name, stack]
+      properties:
+        seat_id:
+          type: string
+          pattern: '^seat_[0-8]$'
+        seat_no:
+          type: integer
+          minimum: 0
+          maximum: 8
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 32
+        stack:
+          type: integer
+          minimum: 0
+
+    SeatState:
+      allOf:
+        - $ref: '#/components/schemas/SeatPublic'
+        - type: object
+          required:
+            - stack_start
+            - contribution_total
+            - contribution_street
+            - is_folded
+            - is_all_in
+            - in_hand
+            - hole_cards
+            - showdown_competing
+            - is_winner
+            - win_amount
+          properties:
+            stack_start:
+              type: integer
+              minimum: 0
+            contribution_total:
+              type: integer
+              minimum: 0
+            contribution_street:
+              type: integer
+              minimum: 0
+            is_folded:
+              type: boolean
+            is_all_in:
+              type: boolean
+            in_hand:
+              type: boolean
+            hole_cards:
+              type: array
+              minItems: 2
+              maxItems: 2
+              items:
+                $ref: '#/components/schemas/Card'
+            showdown_competing:
+              type: boolean
+            best_hand_label:
+              type: string
+              nullable: true
+            best_hand_cards:
+              type: array
+              items:
+                $ref: '#/components/schemas/Card'
+            is_winner:
+              type: boolean
+            win_amount:
+              type: integer
+              minimum: 0
+
+    Card:
+      type: string
+      pattern: '^(?:[2-9TJQKA][cdhs])$'
+      examples: [As, Kd, 9h, 2c]
+
+    AvailableAction:
+      type: object
+      required: [action, enabled]
+      properties:
+        action:
+          $ref: '#/components/schemas/ActionName'
+        amount_type:
+          type: string
+          nullable: true
+          enum: [raise_to, bet_to, null]
+        min:
+          type: integer
+          nullable: true
+          minimum: 0
+        max:
+          type: integer
+          nullable: true
+          minimum: 0
+        default:
+          type: integer
+          nullable: true
+          minimum: 0
+        enabled:
+          type: boolean
+
+    CreateSessionRequest:
+      type: object
+      required:
+        - seat_count
+        - small_blind
+        - big_blind
+        - starting_stack
+      properties:
+        session_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        seat_count:
+          type: integer
+          minimum: 2
+          maximum: 9
+        small_blind:
+          type: integer
+          minimum: 1
+        big_blind:
+          type: integer
+          minimum: 2
+        starting_stack:
+          type: integer
+          minimum: 1
+        seed:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: Session 级随机种子。若不传则由后端生成。
+        seat_names:
+          type: array
+          minItems: 2
+          maxItems: 9
+          items:
+            type: string
+            minLength: 1
+            maxLength: 32
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+      allOf:
+        - $ref: '#/components/schemas/BlindAndStackValidation'
+
+    BlindAndStackValidation:
+      type: object
+      description: |
+        业务约束：
+        1. big_blind 必须大于 small_blind
+        2. starting_stack 建议不小于 big_blind * 20
+      properties: {}
+
+    CreateSessionData:
+      type: object
+      required:
+        - session_id
+        - phase
+        - seat_count
+        - small_blind
+        - big_blind
+        - starting_stack
+        - session_seed
+        - seats
+        - created_at
+      properties:
+        session_id:
+          type: string
+        phase:
+          $ref: '#/components/schemas/SessionPhase'
+        seat_count:
+          type: integer
+        small_blind:
+          type: integer
+        big_blind:
+          type: integer
+        starting_stack:
+          type: integer
+        session_seed:
+          type: integer
+        seats:
+          type: array
+          items:
+            $ref: '#/components/schemas/SeatPublic'
+        created_at:
+          type: string
+          format: date-time
+
+    CreateSessionResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiOk'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/CreateSessionData'
+
+    StartHandRequest:
+      type: object
+      properties:
+        dealer_seat:
+          type: integer
+          minimum: 0
+          maximum: 8
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+
+    HandSummary:
+      type: object
+      required:
+        - hand_id
+        - hand_no
+        - dealer_seat
+        - small_blind_seat
+        - big_blind_seat
+        - street
+        - actor_id
+      properties:
+        hand_id:
+          type: string
+        hand_no:
+          type: integer
+          minimum: 1
+        dealer_seat:
+          type: integer
+          minimum: 0
+          maximum: 8
+        small_blind_seat:
+          type: integer
+          minimum: 0
+          maximum: 8
+        big_blind_seat:
+          type: integer
+          minimum: 0
+          maximum: 8
+        street:
+          $ref: '#/components/schemas/Street'
+        actor_id:
+          type: string
+
+    StartHandData:
+      type: object
+      required: [session_id, phase, current_hand]
+      properties:
+        session_id:
+          type: string
+        phase:
+          $ref: '#/components/schemas/SessionPhase'
+        current_hand:
+          $ref: '#/components/schemas/HandSummary'
+
+    StartHandResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiOk'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/StartHandData'
+
+    CurrentHandState:
+      type: object
+      required:
+        - hand_id
+        - hand_no
+        - session_seed
+        - seed
+        - street
+        - dealer_seat
+        - small_blind_seat
+        - big_blind_seat
+        - pot_total
+        - board_cards
+        - seats
+      properties:
+        hand_id:
+          type: string
+        hand_no:
+          type: integer
+        session_seed:
+          type: integer
+        seed:
+          type: integer
+        street:
+          $ref: '#/components/schemas/Street'
+        dealer_seat:
+          type: integer
+        small_blind_seat:
+          type: integer
+        big_blind_seat:
+          type: integer
+        actor_id:
+          type: string
+          nullable: true
+        to_call:
+          type: integer
+          minimum: 0
+          nullable: true
+        min_bet_to:
+          type: integer
+          minimum: 0
+          nullable: true
+        min_raise_to:
+          type: integer
+          minimum: 0
+          nullable: true
+        pot_total:
+          type: integer
+          minimum: 0
+        board_cards:
+          type: array
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/Card'
+        showdown_started:
+          type: boolean
+        showdown_seat_ids:
+          type: array
+          items:
+            type: string
+        winners:
+          type: array
+          items:
+            type: object
+            required: [seat_id, win_amount]
+            properties:
+              seat_id:
+                type: string
+              win_amount:
+                type: integer
+                minimum: 0
+        seats:
+          type: array
+          minItems: 2
+          maxItems: 9
+          items:
+            $ref: '#/components/schemas/SeatState'
+        available_actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AvailableAction'
+
+    SessionStateData:
+      type: object
+      required: [session_id, phase, session_seed, last_event_id]
+      properties:
+        session_id:
+          type: string
+        phase:
+          $ref: '#/components/schemas/SessionPhase'
+        session_seed:
+          type: integer
+        current_hand:
+          allOf:
+            - $ref: '#/components/schemas/CurrentHandState'
+          nullable: true
+        last_event_id:
+          type: integer
+          minimum: 0
+
+    SessionStateResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiOk'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/SessionStateData'
+
+    SubmitActionRequest:
+      type: object
+      required: [actor_id, action]
+      properties:
+        actor_id:
+          type: string
+          pattern: '^seat_[0-8]$'
+        action:
+          $ref: '#/components/schemas/ActionName'
+        amount:
+          type: integer
+          minimum: 0
+          description: |
+            对 bet/raise 来说，amount 表示“该玩家在当前街的总投入额（bet_to / raise_to）”；
+            不是本次增量。
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+
+    AppliedAction:
+      type: object
+      required: [actor_id, street, action]
+      properties:
+        actor_id:
+          type: string
+        street:
+          $ref: '#/components/schemas/Street'
+        action:
+          $ref: '#/components/schemas/ActionName'
+        amount:
+          type: integer
+          minimum: 0
+          nullable: true
+
+    SubmitActionData:
+      type: object
+      required: [accepted, phase, hand_ended]
+      properties:
+        accepted:
+          type: boolean
+          const: true
+        phase:
+          $ref: '#/components/schemas/SessionPhase'
+        applied_action:
+          $ref: '#/components/schemas/AppliedAction'
+        next_actor_id:
+          type: string
+          nullable: true
+        hand_ended:
+          type: boolean
+
+    SubmitActionResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiOk'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/SubmitActionData'
+
+    SendChatRequest:
+      type: object
+      required: [speaker_id, text]
+      properties:
+        speaker_id:
+          type: string
+          pattern: '^seat_[0-8]$'
+        text:
+          type: string
+          minLength: 1
+          maxLength: 200
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+
+    SendChatData:
+      type: object
+      required: [session_id, event_id, created_at]
+      properties:
+        session_id:
+          type: string
+        hand_id:
+          type: string
+          nullable: true
+        event_id:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+
+    SendChatResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiOk'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/SendChatData'
+
+    EventItem:
+      type: object
+      required: [event_id, channel, event_type, created_at, payload]
+      properties:
+        event_id:
+          type: integer
+          minimum: 1
+        channel:
+          $ref: '#/components/schemas/EventChannel'
+        event_type:
+          $ref: '#/components/schemas/EventType'
+        created_at:
+          type: string
+          format: date-time
+        payload:
+          type: object
+          additionalProperties: true
+
+    ListEventsData:
+      type: object
+      required: [session_id, count, events, next_since_event_id]
+      properties:
+        session_id:
+          type: string
+        count:
+          type: integer
+          minimum: 0
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventItem'
+        next_since_event_id:
+          type: integer
+          minimum: 0
+
+    ListEventsResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiOk'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ListEventsData'
+
+    HandHistoryItem:
+      type: object
+      required:
+        - hand_id
+        - hand_no
+        - dealer_seat
+        - winner_ids
+        - pot_total
+        - action_count
+        - chat_count
+        - started_at
+        - ended_at
+      properties:
+        hand_id:
+          type: string
+        hand_no:
+          type: integer
+          minimum: 1
+        dealer_seat:
+          type: integer
+        winner_ids:
+          type: array
+          items:
+            type: string
+        pot_total:
+          type: integer
+          minimum: 0
+        action_count:
+          type: integer
+          minimum: 0
+        chat_count:
+          type: integer
+          minimum: 0
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+
+    ListHandsData:
+      type: object
+      required: [session_id, items, total]
+      properties:
+        session_id:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/HandHistoryItem'
+        total:
+          type: integer
+          minimum: 0
+
+    ListHandsResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiOk'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ListHandsData'
+
+    WinnerItem:
+      type: object
+      required: [seat_id, win_amount]
+      properties:
+        seat_id:
+          type: string
+        win_amount:
+          type: integer
+          minimum: 0
+
+    ReplayActionItem:
+      type: object
+      required: [seq, actor_id, street, action]
+      properties:
+        seq:
+          type: integer
+          minimum: 1
+        actor_id:
+          type: string
+        street:
+          $ref: '#/components/schemas/Street'
+        action:
+          $ref: '#/components/schemas/ActionName'
+        amount:
+          type: integer
+          minimum: 0
+          nullable: true
+
+    ReplayChatItem:
+      type: object
+      required: [seq, speaker_id, text]
+      properties:
+        seq:
+          type: integer
+          minimum: 1
+        speaker_id:
+          type: string
+        text:
+          type: string
+
+    ReplayData:
+      type: object
+      required:
+        - hand_id
+        - session_id
+        - hand_no
+        - session_seed
+        - seed
+        - dealer_seat
+        - board_cards
+        - winners
+        - final_stacks
+        - actions
+        - chat_messages
+        - final_state
+      properties:
+        hand_id:
+          type: string
+        session_id:
+          type: string
+        hand_no:
+          type: integer
+          minimum: 1
+        session_seed:
+          type: integer
+        seed:
+          type: integer
+        dealer_seat:
+          type: integer
+        board_cards:
+          type: array
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/Card'
+        winners:
+          type: array
+          items:
+            $ref: '#/components/schemas/WinnerItem'
+        final_stacks:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReplayActionItem'
+        chat_messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReplayChatItem'
+        final_state:
+          type: object
+          additionalProperties: true
+
+    GetReplayResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiOk'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/ReplayData'

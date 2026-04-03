@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>德州扑克对局系统</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-poll-interval="{{ poll_interval_ms }}">
+  <header class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">♠️ ♥️ ♣️ ♦️ 在线德州牌桌</p>
+      <h1>德州扑克对局系统</h1>
+      <p id="sessionMeta" class="hero-meta">🧭 未创建牌桌</p>
+    </div>
+    <button id="refreshBtn" type="button" class="ghost-btn">🔄 刷新状态</button>
+  </header>
+
+  <main class="page-shell">
+    <section class="controls-grid">
+      <article class="panel">
+        <div class="panel-title">
+          <h2>🧰 创建牌桌</h2>
+          <span class="panel-note">先开桌，再发牌，随机种子按牌桌固定</span>
+        </div>
+        <form id="createSessionForm" class="form-grid compact-grid controls-form">
+          <label>牌桌编号
+            <input name="session_id" placeholder="可留空，自动生成">
+          </label>
+          <label>座位数
+            <input name="seat_count" type="number" min="2" max="9" value="6" required>
+          </label>
+          <label>小盲
+            <input name="small_blind" type="number" min="1" value="50" required>
+          </label>
+          <label>大盲
+            <input name="big_blind" type="number" min="2" value="100" required>
+          </label>
+          <label>起始筹码
+            <input name="starting_stack" type="number" min="1" value="10000" required>
+          </label>
+          <label>牌桌随机种子
+            <input name="seed" type="number" min="0" value="1234">
+          </label>
+          <button type="submit">🪑 创建牌桌</button>
+        </form>
+      </article>
+
+      <article class="panel">
+        <div class="panel-title">
+          <h2>🎬 开始新一手</h2>
+          <span class="panel-note">控制庄位，本手种子由牌桌自动派生</span>
+        </div>
+        <form id="startHandForm" class="form-grid compact-grid controls-form">
+          <label>庄位
+            <input name="dealer_seat" type="number" min="0" value="0">
+          </label>
+          <button type="submit">🃏 发底牌</button>
+        </form>
+      </article>
+    </section>
+
+    <section class="panel table-panel">
+      <div class="panel-title">
+        <h2>🎯 牌桌</h2>
+        <span class="panel-note">中间看牌局，周围看座位</span>
+      </div>
+      <div id="boardArea" class="board-area"></div>
+      <div id="tableArea" class="table-grid"></div>
+    </section>
+
+    <section class="interaction-grid">
+      <article class="panel">
+        <div class="panel-title">
+          <h2>⚡ 动作</h2>
+          <span class="panel-note">只按后端给出的合法动作操作</span>
+        </div>
+        <div id="actionMeta" class="meta-block">🎮 等待载入</div>
+        <div id="selectedActionHint" class="subtle-box hidden"></div>
+        <div id="actionButtons" class="action-buttons"></div>
+        <div id="amountBox" class="amount-box hidden">
+          <label>下注 / 加注金额
+            <input id="actionAmount" type="number" min="0">
+          </label>
+          <button id="submitAmountAction" type="button">✅ 确认金额动作</button>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-title">
+          <h2>💬 聊天</h2>
+          <span class="panel-note">发言不会阻塞动作流</span>
+        </div>
+        <form id="chatForm" class="chat-form">
+          <label>发言人
+            <select id="speakerId"></select>
+          </label>
+          <label>内容
+            <textarea id="chatText" rows="3" maxlength="200" placeholder="输入聊天内容，最多 200 字" required></textarea>
+          </label>
+          <button type="submit">📨 发送消息</button>
+        </form>
+      </article>
+    </section>
+
+    <section class="bottom-grid">
+      <article class="panel">
+        <div class="panel-title">
+          <h2>🕒 时间线</h2>
+          <span class="panel-note">最新事件在最上方，可滚动查看</span>
+        </div>
+        <div id="timeline" class="scroll-panel timeline"></div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-title">
+          <h2>📚 历史手牌</h2>
+          <span class="panel-note">点击某手可查看回放</span>
+        </div>
+        <div id="historyList" class="scroll-panel history-list"></div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-title">
+          <h2>🎞️ 回放</h2>
+          <span class="panel-note">动作、聊天、结算一屏可读</span>
+        </div>
+        <div id="replayView" class="scroll-panel replay-view">
+          <div class="empty-state">🪄 选择一手已结束牌局查看回放。</div>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <div id="banner" class="banner hidden"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -25,6 +25,8 @@ fastapi_agent_deerflow_chat/thread_registry.json
 
 .idea
 
+poker_table.db
+
 # Virtual environments
 .venv
 venv/

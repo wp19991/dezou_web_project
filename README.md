@@ -2,6 +2,8 @@
 
 基于 `FastAPI + pokerkit + SQLite` 的网页德州扑克对局系统。
 
+![前端界面](./docs/前端界面.png)
+
 ## 启动
 
 ```powershell

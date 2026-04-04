@@ -246,7 +246,7 @@ function hydrateSessionForm(data) {
   seatNameDrafts = [...(data.seats || [])]
     .sort((left, right) => left.seat_no - right.seat_no)
     .map((seat) => seat.display_name);
-  renderSeatNameInputs();
+  renderSeatNameInputs(false);
 }
 
 function renderSessionOverview(data) {
@@ -313,8 +313,10 @@ function syncSeatNameDrafts() {
   });
 }
 
-function renderSeatNameInputs() {
-  syncSeatNameDrafts();
+function renderSeatNameInputs(syncFromDom = true) {
+  if (syncFromDom) {
+    syncSeatNameDrafts();
+  }
   const count = Math.min(9, Math.max(2, Number(seatCountInput.value) || 2));
   seatNamesList.innerHTML = Array.from({ length: count }, (_, index) => {
     const value = seatNameDrafts[index] || defaultSeatName(index);
@@ -501,23 +503,25 @@ function renderSeatSpeech(seatId) {
       </div>
     `;
   }
-  const [latest, ...older] = chats;
   return `
     <div class="seat-chat-panel">
       <div class="seat-chat-head">💬 最近发言</div>
-      ${renderSeatSpeechItem(latest, "latest")}
-      ${older.length
-        ? `
-          <details class="seat-chat-more">
-            <summary>查看更多 ${older.length} 条</summary>
-            <div class="seat-chat-list">
-              ${older.map((item) => renderSeatSpeechItem(item)).join("")}
-            </div>
-          </details>
-        `
-        : ""}
+      <div class="seat-chat-scroll">
+        ${chats.map((item, index) => renderSeatSpeechItem(item, index === 0 ? "latest" : "")).join("")}
+      </div>
     </div>
   `;
+}
+
+function isReplayableHand(item) {
+  if (!item) {
+    return false;
+  }
+  const phase = String(item.phase || "").toLowerCase();
+  return phase === "ended"
+    || phase === "hand_ended"
+    || Boolean(item.ended_at)
+    || Boolean((item.winners || []).length);
 }
 
 function rebuildSeatChats() {
@@ -577,7 +581,7 @@ function rebuildSeatChats() {
   });
 
   Object.keys(bySeat).forEach((seatId) => {
-    bySeat[seatId] = bySeat[seatId].slice(-5).reverse();
+    bySeat[seatId] = bySeat[seatId].reverse();
   });
   recentSeatChats = bySeat;
 }
@@ -677,18 +681,20 @@ function renderBoardAndSeats(hand) {
     seatNode.className = seatClasses.join(" ");
     seatNode.innerHTML = `
       <div class="seat-header">
-        <div class="seat-title">
-          <strong>${escapeHtml(seat.display_name)}</strong>
-          <span class="seat-subline">🪑 ${seatNoLabel(seat.seat_no)}</span>
+        <div class="seat-header-main">
+          <div class="seat-title">
+            <strong>${escapeHtml(seat.display_name)}</strong>
+            <span class="seat-subline">🪑 ${seatNoLabel(seat.seat_no)}</span>
+          </div>
+          <div class="seat-summary">
+            <span class="badge">💵 ${seat.stack}</span>
+            <span class="badge">📍 当街 ${seat.contribution_street}</span>
+            <span class="badge">🪙 本手 ${seat.contribution_total}</span>
+            ${seatFlags(seat)}
+          </div>
         </div>
         <div class="badge-row">${seatBadges(hand, seat)}</div>
       </div>
-      <div class="seat-meta">
-        <span class="badge">💵 ${seat.stack}</span>
-        <span class="badge">📍 当街 ${seat.contribution_street}</span>
-        <span class="badge">🪙 本手 ${seat.contribution_total}</span>
-      </div>
-      <div class="seat-flags">${seatFlags(seat)}</div>
       <div class="seat-body">
         ${renderCardRow(seat.hole_cards)}
         ${renderSeatSpeech(seat.seat_id)}
@@ -858,6 +864,26 @@ function appendTimeline(event) {
   timeline.prepend(node);
 }
 
+function currentTimelineEvents() {
+  const currentHandId = currentState?.current_hand?.hand_id;
+  if (!currentHandId) {
+    return [];
+  }
+  return sessionEvents.filter((event) => event.hand_id === currentHandId);
+}
+
+function renderTimeline() {
+  timeline.innerHTML = "";
+  const events = currentTimelineEvents();
+  if (!events.length) {
+    timeline.innerHTML = currentState?.current_hand?.hand_id
+      ? '<div class="empty-state">🕒 当前手暂时时间线为空，后续动作和聊天会显示在这里。</div>'
+      : '<div class="empty-state">🕒 当前只显示本手时间线，开始新一手后会在这里展示进展。</div>';
+    return;
+  }
+  events.forEach((event) => appendTimeline(event));
+}
+
 async function refreshState() {
   if (!sessionId) {
     return;
@@ -886,7 +912,7 @@ async function refreshHistory() {
           `${seatDisplayName(winner.seat_id, knownSeats)} +${winner.win_amount}`
       )
       .join(" · ");
-    const canReplay = item.phase === "ended";
+    const canReplay = isReplayableHand(item);
     const row = document.createElement("div");
     row.className = "history-item";
     row.innerHTML = `
@@ -924,18 +950,11 @@ async function loadRecentEvents() {
   const data = await api(
     `/api/v1/sessions/${sessionId}/events?since_event_id=${sinceEventId}&limit=200`
   );
-  timeline.innerHTML = "";
   rememberSessionEvents(data.events, true);
-  if (!(data.events || []).length) {
-    timeline.innerHTML = '<div class="empty-state">🕒 暂无时间线事件。</div>';
-    rebuildSeatChats();
-    renderBoardAndSeats(currentState?.current_hand);
-    return [];
-  }
-  data.events.forEach((event) => appendTimeline(event));
+  renderTimeline();
   rebuildSeatChats();
   renderBoardAndSeats(currentState?.current_hand);
-  return data.events;
+  return data.events || [];
 }
 
 async function activateSession(targetSessionId, successMessage = "") {
@@ -1077,7 +1096,6 @@ async function pollEvents() {
     }
     let needsStateRefresh = false;
     data.events.forEach((event) => {
-      appendTimeline(event);
       lastEventId = Math.max(lastEventId, event.event_id);
       if (event.channel !== "chat") {
         needsStateRefresh = true;
@@ -1093,6 +1111,7 @@ async function pollEvents() {
         }
       }
     }
+    renderTimeline();
     rebuildSeatChats();
     renderBoardAndSeats(currentState?.current_hand);
   } catch (error) {

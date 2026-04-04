@@ -64,6 +64,9 @@ let pollHandle = null;
 let currentState = null;
 let selectedActionSpec = null;
 let seatNameDrafts = [];
+let sessionEvents = [];
+let recentSeatChats = {};
+let handIndex = new Map();
 
 const banner = document.getElementById("banner");
 const sessionMeta = document.getElementById("sessionMeta");
@@ -82,6 +85,13 @@ const submitAmountAction = document.getElementById("submitAmountAction");
 const createSessionForm = document.getElementById("createSessionForm");
 const seatCountInput = createSessionForm.querySelector('input[name="seat_count"]');
 const seatNamesList = document.getElementById("seatNamesList");
+const sessionIdInput = createSessionForm.querySelector('input[name="session_id"]');
+const seedInput = createSessionForm.querySelector('input[name="seed"]');
+const randomSessionBtn = document.getElementById("randomSessionBtn");
+const loadSessionBtn = document.getElementById("loadSessionBtn");
+const randomSeedBtn = document.getElementById("randomSeedBtn");
+const sessionOverview = document.getElementById("sessionOverview");
+const startHandBtn = document.getElementById("startHandBtn");
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -90,7 +100,11 @@ async function api(path, options = {}) {
   });
   const data = await response.json();
   if (!response.ok || data.ok === false) {
-    throw new Error(data?.error?.message || "请求失败");
+    const error = new Error(data?.error?.message || "请求失败");
+    error.status = response.status;
+    error.code = data?.error?.code || null;
+    error.details = data?.error?.details || null;
+    throw error;
   }
   return data.data;
 }
@@ -166,6 +180,130 @@ function seatDisplayName(seatId, seats = []) {
 function seatDisplayWithNo(seatId, seats = []) {
   const seat = seatById(seatId, seats);
   return seat ? `${seat.display_name} · ${seatNoLabel(seat.seat_no)}` : seatId;
+}
+
+function allKnownSeats() {
+  const seatMap = new Map();
+  (currentState?.seats || []).forEach((seat) => seatMap.set(seat.seat_id, seat));
+  (currentState?.current_hand?.seats || []).forEach((seat) => seatMap.set(seat.seat_id, seat));
+  return Array.from(seatMap.values()).sort((left, right) => left.seat_no - right.seat_no);
+}
+
+function updateHandIndex(items = []) {
+  items.forEach((item) => {
+    if (!item?.hand_id) {
+      return;
+    }
+    handIndex.set(item.hand_id, {
+      hand_no: item.hand_no,
+      phase: item.phase || "ended",
+      started_at: item.started_at,
+      ended_at: item.ended_at,
+    });
+  });
+  if (currentState?.current_hand?.hand_id) {
+    handIndex.set(currentState.current_hand.hand_id, {
+      hand_no: currentState.current_hand.hand_no,
+      phase: currentState.phase === "waiting_actor_action" ? "running" : "ended",
+      started_at: currentState.current_hand.started_at || null,
+      ended_at: currentState.current_hand.ended_at || null,
+    });
+  }
+}
+
+function rememberSessionEvents(events, replace = false) {
+  const existing = replace ? [] : sessionEvents.slice();
+  const byId = new Map(existing.map((event) => [event.event_id, event]));
+  (events || []).forEach((event) => byId.set(event.event_id, event));
+  sessionEvents = Array.from(byId.values())
+    .sort((left, right) => left.event_id - right.event_id)
+    .slice(-240);
+}
+
+function generateRandomSessionId() {
+  const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+  const suffix = Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
+  return `table-${suffix}`;
+}
+
+function generateRandomSeed() {
+  return String(Math.floor(Math.random() * 2_147_483_647));
+}
+
+function hydrateSessionForm(data) {
+  if (!data) {
+    return;
+  }
+  sessionIdInput.value = data.session_id || "";
+  seatCountInput.value = data.seat_count ?? seatCountInput.value;
+  createSessionForm.querySelector('input[name="small_blind"]').value =
+    data.small_blind ?? createSessionForm.querySelector('input[name="small_blind"]').value;
+  createSessionForm.querySelector('input[name="big_blind"]').value =
+    data.big_blind ?? createSessionForm.querySelector('input[name="big_blind"]').value;
+  createSessionForm.querySelector('input[name="starting_stack"]').value =
+    data.starting_stack ?? createSessionForm.querySelector('input[name="starting_stack"]').value;
+  seedInput.value = data.session_seed ?? seedInput.value;
+  seatNameDrafts = [...(data.seats || [])]
+    .sort((left, right) => left.seat_no - right.seat_no)
+    .map((seat) => seat.display_name);
+  renderSeatNameInputs();
+}
+
+function renderSessionOverview(data) {
+  if (!data) {
+    sessionOverview.innerHTML = '<div class="empty-state compact-empty">创建或载入牌桌后，可在这里查看当前进度并继续对局。</div>';
+    startHandBtn.disabled = true;
+    startHandBtn.textContent = "🃏 开始新一手";
+    return;
+  }
+
+  const seats = data.current_hand?.seats || data.seats || [];
+  const currentHand = data.current_hand;
+  const nextDealerSeat = data.phase === "waiting_actor_action" && currentHand
+    ? currentHand.dealer_seat
+    : data.next_dealer_seat;
+  const phaseDescription = currentHand
+    ? `${phaseLabel(data.phase)} · 第 ${currentHand.hand_no} 手`
+    : `${phaseLabel(data.phase)} · 尚未开始`;
+  const actionDescription = currentHand?.actor_id
+    ? seatDisplayWithNo(currentHand.actor_id, seats)
+    : (currentHand?.winners?.length
+      ? winnerSummaryText(currentHand.winners, seats)
+      : "等待开始新一手");
+
+  sessionOverview.innerHTML = `
+    <div class="chip-line session-chip-line">
+      <span class="badge">🧭 ${escapeHtml(data.session_id)}</span>
+      <span class="badge">🎲 牌桌种子 ${data.session_seed}</span>
+      <span class="badge">🎩 下一庄 ${seatNoLabel(nextDealerSeat)}</span>
+    </div>
+    <div class="session-stat-grid">
+      <div class="session-stat">
+        <span class="session-stat-label">当前阶段</span>
+        <strong>${escapeHtml(phaseDescription)}</strong>
+      </div>
+      <div class="session-stat">
+        <span class="session-stat-label">当前进度</span>
+        <strong>${escapeHtml(actionDescription)}</strong>
+      </div>
+      <div class="session-stat">
+        <span class="session-stat-label">盲注 / 座位</span>
+        <strong>${data.small_blind}/${data.big_blind} · ${data.seat_count} 人桌</strong>
+      </div>
+      <div class="session-stat">
+        <span class="session-stat-label">玩家</span>
+        <strong>${escapeHtml((data.seats || []).map((seat) => seat.display_name).join(" · "))}</strong>
+      </div>
+    </div>
+  `;
+
+  startHandBtn.disabled = !sessionId || data.phase === "waiting_actor_action";
+  startHandBtn.textContent =
+    data.phase === "waiting_actor_action" ? "⏳ 当前手未结束" : "🃏 开始新一手";
+  startHandBtn.title =
+    data.phase === "waiting_actor_action"
+      ? "当前有未完成的手牌，请继续完成本手"
+      : `系统会自动轮到 ${seatNoLabel(data.next_dealer_seat)} 当庄`;
 }
 
 function syncSeatNameDrafts() {
@@ -286,7 +424,9 @@ function setSessionMeta(data) {
 function renderState(data) {
   currentState = data;
   lastEventId = data.last_event_id;
+  updateHandIndex();
   setSessionMeta(data);
+  renderSessionOverview(data);
   renderBoardAndSeats(data.current_hand);
   renderActions(data.current_hand);
   renderSpeakerOptions(data.current_hand);
@@ -328,6 +468,118 @@ function seatFlags(seat) {
     flags.push("🪞 参与比牌");
   }
   return flags.map((flag) => `<span class="badge">${flag}</span>`).join("");
+}
+
+function chatStreetLabel(value) {
+  if (!value) {
+    return "牌局中";
+  }
+  return streetLabel(value);
+}
+
+function chatContextLabel(item) {
+  const handText = item.hand_no ? `第 ${item.hand_no} 手` : "最近对话";
+  return `${handText} · ${chatStreetLabel(item.street)}`;
+}
+
+function renderSeatSpeechItem(item, extraClass = "") {
+  return `
+    <div class="seat-chat-item ${extraClass}">
+      <div class="seat-chat-meta">${escapeHtml(chatContextLabel(item))} · ${escapeHtml(formatDateTime(item.created_at))}</div>
+      <div class="seat-chat-text">${escapeHtml(item.text)}</div>
+    </div>
+  `;
+}
+
+function renderSeatSpeech(seatId) {
+  const chats = recentSeatChats[seatId] || [];
+  if (!chats.length) {
+    return `
+      <div class="seat-chat-panel seat-chat-empty">
+        <div class="seat-chat-head">💬 最近发言</div>
+        <div class="seat-chat-placeholder">最近还没有发言</div>
+      </div>
+    `;
+  }
+  const [latest, ...older] = chats;
+  return `
+    <div class="seat-chat-panel">
+      <div class="seat-chat-head">💬 最近发言</div>
+      ${renderSeatSpeechItem(latest, "latest")}
+      ${older.length
+        ? `
+          <details class="seat-chat-more">
+            <summary>查看更多 ${older.length} 条</summary>
+            <div class="seat-chat-list">
+              ${older.map((item) => renderSeatSpeechItem(item)).join("")}
+            </div>
+          </details>
+        `
+        : ""}
+    </div>
+  `;
+}
+
+function rebuildSeatChats() {
+  const handMeta = new Map();
+  const currentHand = currentState?.current_hand;
+  if (currentHand?.hand_id) {
+    handMeta.set(currentHand.hand_id, {
+      hand_no: currentHand.hand_no,
+      street: currentHand.street,
+    });
+  }
+  handIndex.forEach((item, handId) => {
+    if (!handMeta.has(handId)) {
+      handMeta.set(handId, { hand_no: item.hand_no, street: null });
+    }
+  });
+
+  const bySeat = {};
+  sessionEvents.forEach((event) => {
+    if (!event.hand_id) {
+      return;
+    }
+
+    const nextMeta = handMeta.get(event.hand_id) || { hand_no: null, street: null };
+    if (event.event_type === "hand_started") {
+      nextMeta.hand_no = event.payload?.hand_no ?? nextMeta.hand_no;
+      nextMeta.street = "preflop";
+      handMeta.set(event.hand_id, nextMeta);
+    }
+    if (event.event_type === "street_changed") {
+      nextMeta.street = event.payload?.street ?? nextMeta.street;
+      handMeta.set(event.hand_id, nextMeta);
+    }
+    if (event.event_type === "showdown_started") {
+      nextMeta.street = "showdown";
+      handMeta.set(event.hand_id, nextMeta);
+    }
+    if (event.event_type !== "chat_sent") {
+      return;
+    }
+
+    const speakerId = event.payload?.speaker_id;
+    if (!speakerId) {
+      return;
+    }
+    if (!bySeat[speakerId]) {
+      bySeat[speakerId] = [];
+    }
+    bySeat[speakerId].push({
+      event_id: event.event_id,
+      hand_id: event.hand_id,
+      hand_no: nextMeta.hand_no,
+      street: nextMeta.street,
+      created_at: event.created_at,
+      text: event.payload?.text || "",
+    });
+  });
+
+  Object.keys(bySeat).forEach((seatId) => {
+    bySeat[seatId] = bySeat[seatId].slice(-5).reverse();
+  });
+  recentSeatChats = bySeat;
 }
 
 function renderBoardAndSeats(hand) {
@@ -437,7 +689,10 @@ function renderBoardAndSeats(hand) {
         <span class="badge">🪙 本手 ${seat.contribution_total}</span>
       </div>
       <div class="seat-flags">${seatFlags(seat)}</div>
-      ${renderCardRow(seat.hole_cards)}
+      <div class="seat-body">
+        ${renderCardRow(seat.hole_cards)}
+        ${renderSeatSpeech(seat.seat_id)}
+      </div>
       ${resultBlock}
     `;
     tableArea.appendChild(seatNode);
@@ -523,8 +778,9 @@ async function submitAction(actionSpec, amountOverride = null) {
   });
   resetAmountAction();
   const state = await refreshState();
+  await refreshHistory();
+  await loadRecentEvents();
   if (state?.phase === "hand_ended" && state.current_hand?.hand_id) {
-    await refreshHistory();
     await loadReplay(state.current_hand.hand_id);
   }
 }
@@ -543,7 +799,7 @@ function renderSpeakerOptions(hand) {
   }
 }
 
-function eventSummary(event, seats = currentState?.current_hand?.seats || []) {
+function eventSummary(event, seats = allKnownSeats()) {
   const payload = event.payload || {};
   switch (event.event_type) {
     case "session_created":
@@ -573,22 +829,32 @@ function eventSummary(event, seats = currentState?.current_hand?.seats || []) {
   }
 }
 
-function appendTimeline(event) {
+function timelineItemMarkup(event, seats = allKnownSeats(), includeDetails = false) {
   const meta = EVENT_META[event.event_type] || { emoji: "🎲", label: event.event_type };
-  const node = document.createElement("div");
-  node.className = "timeline-item";
-  node.innerHTML = `
+  return `
     <div class="timeline-top">
-      <span class="timeline-tag">${meta.emoji} ${escapeHtml(meta.label)}</span>
+      <div class="timeline-head">
+        <span class="timeline-tag">${meta.emoji} ${escapeHtml(meta.label)}</span>
+        <span class="timeline-channel">${escapeHtml(channelLabel(event.channel))}</span>
+      </div>
       <span class="timeline-time">#${event.event_id} · ${escapeHtml(formatDateTime(event.created_at))}</span>
     </div>
-    <div class="timeline-title">${escapeHtml(channelLabel(event.channel))}</div>
-    <div class="event-summary">${escapeHtml(eventSummary(event, currentState?.current_hand?.seats || []))}</div>
-    <details class="event-detail-wrap">
-      <summary>查看事件详情</summary>
-      <pre class="event-detail">${escapeHtml(JSON.stringify(event.payload, null, 2))}</pre>
-    </details>
+    <div class="event-summary">${escapeHtml(eventSummary(event, seats))}</div>
+    ${includeDetails
+      ? `
+        <details class="event-detail-wrap">
+          <summary>查看事件详情</summary>
+          <pre class="event-detail">${escapeHtml(JSON.stringify(event.payload, null, 2))}</pre>
+        </details>
+      `
+      : ""}
   `;
+}
+
+function appendTimeline(event) {
+  const node = document.createElement("div");
+  node.className = "timeline-item";
+  node.innerHTML = timelineItemMarkup(event, allKnownSeats(), true);
   timeline.prepend(node);
 }
 
@@ -603,21 +869,24 @@ async function refreshState() {
 
 async function refreshHistory() {
   if (!sessionId) {
-    return;
+    return null;
   }
   const data = await api(`/api/v1/sessions/${sessionId}/hands?limit=20&offset=0`);
+  updateHandIndex(data.items || []);
   historyList.innerHTML = "";
-    if (!data.items.length) {
-      historyList.innerHTML = '<div class="empty-state">📚 暂无历史手牌。</div>';
-      return;
+  if (!data.items.length) {
+    historyList.innerHTML = '<div class="empty-state">📚 暂无历史手牌。</div>';
+    return data;
   }
   data.items.forEach((item) => {
+    const knownSeats = allKnownSeats();
     const winners = (item.winners || [])
       .map(
         (winner) =>
-          `${seatDisplayName(winner.seat_id, currentState?.current_hand?.seats || [])} +${winner.win_amount}`
+          `${seatDisplayName(winner.seat_id, knownSeats)} +${winner.win_amount}`
       )
       .join(" · ");
+    const canReplay = item.phase === "ended";
     const row = document.createElement("div");
     row.className = "history-item";
     row.innerHTML = `
@@ -626,9 +895,12 @@ async function refreshHistory() {
           <div class="history-title">🃏 第 ${item.hand_no} 手</div>
           <div class="history-subline" title="${escapeHtml(item.hand_id)}">${escapeHtml(item.hand_id)}</div>
         </div>
-        <button type="button" data-hand-id="${escapeHtml(item.hand_id)}">🎞️ 查看回放</button>
+        <button type="button" data-hand-id="${escapeHtml(item.hand_id)}" ${canReplay ? "" : "disabled"}>
+          ${canReplay ? "🎞️ 查看回放" : "⏳ 进行中"}
+        </button>
       </div>
       <div class="chip-line">
+        <span class="badge">${canReplay ? "✅ 已结束" : "🟢 进行中"}</span>
         <span class="badge">🏆 赢家 ${escapeHtml(winners || (item.winner_ids || []).join(", ") || "-")}</span>
         <span class="badge">💰 底池 ${item.pot_total}</span>
         <span class="badge">⚡ 动作 ${item.action_count}</span>
@@ -636,9 +908,65 @@ async function refreshHistory() {
       </div>
       <div class="history-subline">🕒 ${escapeHtml(item.started_at)} → ${escapeHtml(item.ended_at || "-")}</div>
     `;
-    row.querySelector("button").addEventListener("click", () => loadReplay(item.hand_id));
+    if (canReplay) {
+      row.querySelector("button").addEventListener("click", () => loadReplay(item.hand_id));
+    }
     historyList.appendChild(row);
   });
+  return data;
+}
+
+async function loadRecentEvents() {
+  if (!sessionId) {
+    return [];
+  }
+  const sinceEventId = Math.max(0, lastEventId - 200);
+  const data = await api(
+    `/api/v1/sessions/${sessionId}/events?since_event_id=${sinceEventId}&limit=200`
+  );
+  timeline.innerHTML = "";
+  rememberSessionEvents(data.events, true);
+  if (!(data.events || []).length) {
+    timeline.innerHTML = '<div class="empty-state">🕒 暂无时间线事件。</div>';
+    rebuildSeatChats();
+    renderBoardAndSeats(currentState?.current_hand);
+    return [];
+  }
+  data.events.forEach((event) => appendTimeline(event));
+  rebuildSeatChats();
+  renderBoardAndSeats(currentState?.current_hand);
+  return data.events;
+}
+
+async function activateSession(targetSessionId, successMessage = "") {
+  const normalized = String(targetSessionId || "").trim();
+  if (!normalized) {
+    showBanner("请输入牌桌编号");
+    return null;
+  }
+
+  const state = await api(`/api/v1/sessions/${normalized}/state`);
+  handIndex = new Map();
+  sessionEvents = [];
+  recentSeatChats = {};
+  sessionId = normalized;
+  renderState(state);
+  hydrateSessionForm(state);
+  await refreshHistory();
+  await loadRecentEvents();
+  startPolling();
+
+  if (state.phase === "hand_ended" && state.current_hand?.hand_id) {
+    await loadReplay(state.current_hand.hand_id);
+  } else {
+    replayView.innerHTML = '<div class="empty-state">🪄 选择一手已结束牌局查看回放。</div>';
+    replayView.dataset.handId = "";
+  }
+
+  if (successMessage) {
+    showBanner(successMessage);
+  }
+  return state;
 }
 
 function renderReplay(data) {
@@ -667,15 +995,9 @@ function renderReplay(data) {
     .join("");
   const replayTimeline = (data.timeline || [])
     .map((item) => {
-      const meta = EVENT_META[item.event_type] || { emoji: "🎲", label: item.event_type };
       return `
         <div class="timeline-item replay-timeline-item">
-          <div class="timeline-top">
-            <span class="timeline-tag">${meta.emoji} ${escapeHtml(meta.label)}</span>
-            <span class="timeline-time">#${item.event_id} · ${escapeHtml(formatDateTime(item.created_at))}</span>
-          </div>
-          <div class="timeline-title">${escapeHtml(channelLabel(item.channel))}</div>
-          <div class="event-summary">${escapeHtml(eventSummary(item, replaySeats))}</div>
+          ${timelineItemMarkup(item, replaySeats)}
         </div>
       `;
     })
@@ -750,6 +1072,9 @@ async function pollEvents() {
     const data = await api(
       `/api/v1/sessions/${sessionId}/events?since_event_id=${lastEventId}&limit=200`
     );
+    if (!(data.events || []).length) {
+      return;
+    }
     let needsStateRefresh = false;
     data.events.forEach((event) => {
       appendTimeline(event);
@@ -757,19 +1082,19 @@ async function pollEvents() {
       if (event.channel !== "chat") {
         needsStateRefresh = true;
       }
-      if (event.event_type === "hand_ended") {
-        refreshHistory().catch((error) => showBanner(error.message));
-      }
     });
+    rememberSessionEvents(data.events);
     if (needsStateRefresh) {
       const state = await refreshState();
+      await refreshHistory();
       if (state?.phase === "hand_ended") {
-        await refreshHistory();
         if (state.current_hand?.hand_id && replayView.dataset.handId !== state.current_hand.hand_id) {
           await loadReplay(state.current_hand.hand_id);
         }
       }
     }
+    rebuildSeatChats();
+    renderBoardAndSeats(currentState?.current_hand);
   } catch (error) {
     showBanner(error.message);
   }
@@ -805,14 +1130,14 @@ createSessionForm.addEventListener("submit", async (event) => {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    sessionId = data.session_id;
-    timeline.innerHTML = '<div class="empty-state">🕒 新牌桌已创建，等待事件流刷新。</div>';
-    replayView.innerHTML = '<div class="empty-state">🪄 选择一手已结束牌局查看回放。</div>';
-    replayView.dataset.handId = "";
-    await refreshState();
-    await refreshHistory();
-    startPolling();
+    await activateSession(data.session_id, "新牌桌已创建");
   } catch (error) {
+    if (payload.session_id && error.status === 409) {
+      activateSession(payload.session_id, "已载入现有牌桌").catch((loadError) =>
+        showBanner(loadError.message)
+      );
+      return;
+    }
     showBanner(error.message);
   }
 });
@@ -820,22 +1145,23 @@ createSessionForm.addEventListener("submit", async (event) => {
 document.getElementById("startHandForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!sessionId) {
-    showBanner("请先创建牌桌");
+    showBanner("请先创建或载入牌桌");
     return;
   }
-  const form = new FormData(event.currentTarget);
-  const dealerValue = form.get("dealer_seat");
-  const payload = {};
-  if (dealerValue !== "") {
-    payload.dealer_seat = Number(dealerValue);
+  if (currentState?.phase === "waiting_actor_action") {
+    showBanner("当前有未完成手牌，请继续完成本手");
+    return;
   }
   try {
     await api(`/api/v1/sessions/${sessionId}/hands`, {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({}),
     });
     await refreshState();
     await refreshHistory();
+    await loadRecentEvents();
+    replayView.innerHTML = '<div class="empty-state">🪄 当前手正在进行，回放会在本手结束后生成。</div>';
+    replayView.dataset.handId = "";
   } catch (error) {
     showBanner(error.message);
   }
@@ -844,7 +1170,7 @@ document.getElementById("startHandForm").addEventListener("submit", async (event
 document.getElementById("chatForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!sessionId) {
-    showBanner("请先创建牌桌");
+    showBanner("请先创建或载入牌桌");
     return;
   }
   try {
@@ -856,6 +1182,7 @@ document.getElementById("chatForm").addEventListener("submit", async (event) => 
       }),
     });
     document.getElementById("chatText").value = "";
+    await loadRecentEvents();
   } catch (error) {
     showBanner(error.message);
   }
@@ -864,8 +1191,24 @@ document.getElementById("chatForm").addEventListener("submit", async (event) => 
 document.getElementById("refreshBtn").addEventListener("click", () => {
   refreshState().catch((error) => showBanner(error.message));
   refreshHistory().catch((error) => showBanner(error.message));
+  loadRecentEvents().catch((error) => showBanner(error.message));
+});
+
+randomSessionBtn.addEventListener("click", () => {
+  sessionIdInput.value = generateRandomSessionId();
+});
+
+randomSeedBtn.addEventListener("click", () => {
+  seedInput.value = generateRandomSeed();
+});
+
+loadSessionBtn.addEventListener("click", () => {
+  activateSession(sessionIdInput.value, "已载入现有牌桌").catch((error) =>
+    showBanner(error.message)
+  );
 });
 
 seatCountInput.addEventListener("input", renderSeatNameInputs);
 seatNamesList.addEventListener("input", syncSeatNameDrafts);
 renderSeatNameInputs();
+renderSessionOverview(null);

@@ -18,59 +18,71 @@
 
   <main class="page-shell">
     <section class="controls-grid">
-      <article class="panel">
+      <article class="panel session-setup-panel">
         <div class="panel-title">
-          <h2>🧰 创建牌桌</h2>
-          <span class="panel-note">先开桌，再发牌，随机种子按牌桌固定</span>
+          <h2>🧰 牌桌设置</h2>
+          <span class="panel-note">创建新牌桌，或输入已有编号继续当前对局</span>
         </div>
-        <form id="createSessionForm" class="form-grid compact-grid controls-form">
-          <label>牌桌编号
-            <input name="session_id" placeholder="可留空，自动生成">
-          </label>
-          <label>座位数
-            <input name="seat_count" type="number" min="2" max="9" value="6" required>
-          </label>
-          <label>小盲
-            <input name="small_blind" type="number" min="1" value="50" required>
-          </label>
-          <label>大盲
-            <input name="big_blind" type="number" min="2" value="100" required>
-          </label>
-          <label>起始筹码
-            <input name="starting_stack" type="number" min="1" value="10000" required>
-          </label>
-          <label>牌桌随机种子
-            <input name="seed" type="number" min="0" value="1234">
-          </label>
-          <div class="seat-name-editor">
-            <div class="seat-name-head">
-              <strong>👥 玩家姓名</strong>
-              <span>会随座位数自动增减，也可以单独改名</span>
+        <div class="session-setup-grid">
+          <form id="createSessionForm" class="form-grid compact-grid controls-form">
+            <label class="field-span-2">牌桌编号
+              <div class="inline-input dual-action">
+                <input name="session_id" placeholder="输入已有编号可继续对局，也可留空自动生成">
+                <button id="randomSessionBtn" type="button" class="inline-btn">随机</button>
+                <button id="loadSessionBtn" type="button" class="inline-btn secondary-btn">载入</button>
+              </div>
+            </label>
+            <label>座位数
+              <input name="seat_count" type="number" min="2" max="9" value="6" required>
+            </label>
+            <label>小盲
+              <input name="small_blind" type="number" min="1" value="50" required>
+            </label>
+            <label>大盲
+              <input name="big_blind" type="number" min="2" value="100" required>
+            </label>
+            <label>起始筹码
+              <input name="starting_stack" type="number" min="1" value="10000" required>
+            </label>
+            <label class="field-span-2">牌桌随机种子
+              <div class="inline-input">
+                <input name="seed" type="number" min="0" value="1234">
+                <button id="randomSeedBtn" type="button" class="inline-btn">随机</button>
+              </div>
+            </label>
+            <div class="seat-name-editor">
+              <div class="seat-name-head">
+                <strong>👥 玩家姓名</strong>
+                <span>座位数变化时会自动增减，也可以逐个改名</span>
+              </div>
+              <div id="seatNamesList" class="seat-name-list"></div>
             </div>
-            <div id="seatNamesList" class="seat-name-list"></div>
-          </div>
-          <button type="submit">🪑 创建牌桌</button>
-        </form>
-      </article>
+            <div class="form-actions">
+              <button type="submit">🪑 创建新牌桌</button>
+              <span class="form-helper">如果编号已存在，会直接载入历史对局并恢复当前现场。</span>
+            </div>
+          </form>
 
-      <article class="panel">
-        <div class="panel-title">
-          <h2>🎬 开始新一手</h2>
-          <span class="panel-note">控制庄位，本手种子由牌桌自动派生</span>
+          <aside class="session-quick-panel">
+            <div class="panel-title compact-title">
+              <h2>🎬 对局控制</h2>
+              <span class="panel-note">系统会自动轮庄，未结束手牌请直接继续完成</span>
+            </div>
+            <div id="sessionOverview" class="session-overview">
+              <div class="empty-state compact-empty">创建或载入牌桌后，可在这里查看当前进度并继续对局。</div>
+            </div>
+            <form id="startHandForm" class="start-hand-form">
+              <button id="startHandBtn" type="submit">🃏 开始新一手</button>
+            </form>
+          </aside>
         </div>
-        <form id="startHandForm" class="form-grid compact-grid controls-form">
-          <label>庄位
-            <input name="dealer_seat" type="number" min="0" value="0">
-          </label>
-          <button type="submit">🃏 发底牌</button>
-        </form>
       </article>
     </section>
 
     <section class="panel table-panel">
       <div class="panel-title">
         <h2>🎯 牌桌</h2>
-        <span class="panel-note">中间看牌局，周围看座位</span>
+        <span class="panel-note">中间看牌局，周围看座位和最近发言</span>
       </div>
       <div id="boardArea" class="board-area"></div>
       <div id="tableArea" class="table-grid"></div>
@@ -122,7 +134,7 @@
       <article class="panel">
         <div class="panel-title">
           <h2>📚 历史手牌</h2>
-          <span class="panel-note">点击某手可查看回放</span>
+          <span class="panel-note">可查看已结束回放，也能看到正在进行中的手牌</span>
         </div>
         <div id="historyList" class="scroll-panel history-list"></div>
       </article>

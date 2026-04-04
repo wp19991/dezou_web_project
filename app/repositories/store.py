@@ -171,7 +171,27 @@ class Store:
         total_sql = text("SELECT COUNT(*) AS value FROM hands WHERE session_id = :session_id")
         items_sql = text(
             """
-            SELECT h.hand_id, h.hand_no, h.dealer_seat, h.started_at, h.ended_at, hr.summary_json
+            SELECT
+                h.hand_id,
+                h.hand_no,
+                h.dealer_seat,
+                h.phase,
+                h.pot_total,
+                h.started_at,
+                h.ended_at,
+                hr.summary_json,
+                (
+                    SELECT COUNT(*)
+                    FROM events e
+                    WHERE e.hand_id = h.hand_id
+                      AND e.event_type = 'action_applied'
+                ) AS action_count,
+                (
+                    SELECT COUNT(*)
+                    FROM events e
+                    WHERE e.hand_id = h.hand_id
+                      AND e.channel = 'chat'
+                ) AS chat_count
             FROM hands h
             LEFT JOIN hand_replays hr ON hr.hand_id = h.hand_id
             WHERE h.session_id = :session_id
@@ -195,11 +215,13 @@ class Store:
                     {
                         "hand_id": row["hand_id"],
                         "hand_no": row["hand_no"],
+                        "phase": row["phase"],
                         "dealer_seat": row["dealer_seat"],
                         "winner_ids": [],
-                        "pot_total": 0,
-                        "action_count": 0,
-                        "chat_count": 0,
+                        "winners": [],
+                        "pot_total": row["pot_total"],
+                        "action_count": int(row["action_count"] or 0),
+                        "chat_count": int(row["chat_count"] or 0),
                         "started_at": row["started_at"],
                         "ended_at": row["ended_at"],
                     }

@@ -72,6 +72,41 @@ class HandRuntime:
 
 
 class TableKernel:
+    def restore_hand(
+        self,
+        session_row: dict[str, Any],
+        session_seats: list[dict[str, Any]],
+        hand_row: dict[str, Any],
+        hand_events: list[dict[str, Any]],
+    ) -> HandRuntime:
+        runtime, _ = self.start_hand(
+            session_row,
+            session_seats,
+            int(hand_row["hand_no"]),
+            int(hand_row["seed"]),
+            int(hand_row["dealer_seat"]),
+        )
+        runtime.hand_id = str(hand_row["hand_id"])
+        runtime.started_at = str(hand_row["started_at"])
+        runtime.ended_at = hand_row["ended_at"]
+
+        action_events = [
+            event for event in hand_events if event["event_type"] == "action_applied"
+        ]
+        for event in action_events:
+            payload = event["payload"]
+            self.apply_action(
+                runtime,
+                str(payload["actor_id"]),
+                str(payload["action"]),
+                payload.get("amount"),
+            )
+
+        runtime.hand_id = str(hand_row["hand_id"])
+        runtime.started_at = str(hand_row["started_at"])
+        runtime.ended_at = hand_row["ended_at"]
+        return runtime
+
     def start_hand(
         self,
         session_row: dict[str, Any],
@@ -476,6 +511,7 @@ class TableKernel:
             "hand_id": runtime.hand_id,
             "session_id": runtime.session_id,
             "hand_no": runtime.hand_no,
+            "phase": "ended" if runtime.phase == "ended" else "running",
             "dealer_seat": runtime.dealer_seat,
             "winner_ids": [seat_id for seat_id, _ in sorted(runtime.winners.items())],
             "winners": [

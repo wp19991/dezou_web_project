@@ -116,6 +116,7 @@ class PokerService:
         viewer_name: str | None = None,
     ) -> dict[str, Any]:
         session_row = self._require_session(session_id)
+        session_seats = self.store.fetch_session_seats(session_id)
         current_hand = self._current_hand_state(session_row)
         current_hand = self._attach_hand_activity(current_hand)
         viewer = None
@@ -127,7 +128,21 @@ class PokerService:
             {
                 "session_id": session_id,
                 "phase": session_row["phase"],
+                "seat_count": int(session_row["seat_count"]),
+                "small_blind": int(session_row["small_blind"]),
+                "big_blind": int(session_row["big_blind"]),
+                "starting_stack": int(session_row["starting_stack"]),
                 "session_seed": int(session_row["rng_seed"]),
+                "next_dealer_seat": int(session_row["next_dealer_seat"]),
+                "seats": [
+                    {
+                        "seat_id": seat["seat_id"],
+                        "seat_no": int(seat["seat_no"]),
+                        "display_name": seat["display_name"],
+                        "stack": int(seat["stack"]),
+                    }
+                    for seat in session_seats
+                ],
                 "current_hand": current_hand,
                 "viewer": viewer,
                 "last_event_id": self.store.fetch_last_event_id(session_id),
@@ -152,7 +167,7 @@ class PokerService:
             if dealer_seat >= seat_count:
                 raise AppError("INVALID_REQUEST", "dealer_seat 超出 seat_count", 422)
 
-            runtime = self.registry.get_runtime(session_id)
+            runtime = self._get_or_restore_runtime(session_row)
             if runtime and runtime.phase != "ended":
                 raise AppError("HAND_ALREADY_RUNNING", "当前已有未结束手牌", 409)
 
@@ -320,6 +335,7 @@ class PokerService:
                 "events": [
                     {
                         "event_id": event["event_id"],
+                        "hand_id": event["hand_id"],
                         "channel": event["channel"],
                         "event_type": event["event_type"],
                         "created_at": event["created_at"],
@@ -431,7 +447,7 @@ class PokerService:
 
     def _current_hand_state(self, session_row: dict[str, Any]) -> dict[str, Any] | None:
         session_id = session_row["session_id"]
-        runtime = self.registry.get_runtime(session_id)
+        runtime = self._get_or_restore_runtime(session_row)
         if runtime and runtime.hand_id == session_row["current_hand_id"]:
             return self.kernel.current_hand_state(runtime)
         if not session_row["current_hand_id"]:
@@ -448,6 +464,27 @@ class PokerService:
         if replay_final_state:
             self._merge_replay_state(state, replay_final_state)
         return state
+
+    def _get_or_restore_runtime(self, session_row: dict[str, Any]) -> Any | None:
+        session_id = session_row["session_id"]
+        runtime = self.registry.get_runtime(session_id)
+        if runtime and runtime.hand_id == session_row["current_hand_id"]:
+            return runtime
+        if session_row["phase"] != "waiting_actor_action" or not session_row["current_hand_id"]:
+            return runtime
+
+        hand_row = self.store.fetch_current_hand(session_id)
+        if not hand_row or hand_row["phase"] != "running":
+            return runtime
+
+        session_seats = self.store.fetch_session_seats(session_id)
+        hand_events = [
+            self.store.deserialize_event(row)
+            for row in self.store.list_hand_events(hand_row["hand_id"])
+        ]
+        restored = self.kernel.restore_hand(session_row, session_seats, hand_row, hand_events)
+        self.registry.set_runtime(session_id, restored)
+        return restored
 
     def _require_session(self, session_id: str) -> dict[str, Any]:
         session_row = self.store.fetch_session(session_id)

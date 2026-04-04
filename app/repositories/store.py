@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy import Engine, text
 
-from app.core.utils import json_dumps, json_loads
+from app.core.utils import json_dumps, json_loads, to_iso
 
 
 class Store:
@@ -526,6 +526,7 @@ class Store:
                 "created_at": (
                     response.get("created_at")
                     or response.get("data", {}).get("created_at")
+                    or to_iso()
                 ),
             },
         )

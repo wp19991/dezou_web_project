@@ -94,3 +94,59 @@ def test_all_in_flow_generates_history_and_replay(client) -> None:
     assert items[0]["hand_id"] == hand_id
     assert items[0]["action_count"] == 2
     assert items[0]["winners"]
+
+def test_request_id_persists_start_hand_and_action(client) -> None:
+    created = client.post(
+        "/api/v1/sessions",
+        json={
+            "session_id": "request-id-session",
+            "request_id": "create-1",
+            "seat_count": 2,
+            "small_blind": 50,
+            "big_blind": 100,
+            "starting_stack": 2000,
+            "seed": 456,
+            "seat_names": ["Alice", "Bob"],
+        },
+    )
+    assert created.status_code == 201
+    session_id = created.json()["data"]["session_id"]
+
+    started = client.post(
+        f"/api/v1/sessions/{session_id}/hands",
+        json={"dealer_seat": 0, "request_id": "start-1"},
+    )
+    assert started.status_code == 201
+    hand_id = started.json()["data"]["current_hand"]["hand_id"]
+
+    state = client.get(f"/api/v1/sessions/{session_id}/state").json()["data"]
+    actor_id = state["current_hand"]["actor_id"]
+    first_action = client.post(
+        f"/api/v1/sessions/{session_id}/actions",
+        json={"actor_id": actor_id, "action": "call", "request_id": "action-1"},
+    )
+    assert first_action.status_code == 200
+    assert first_action.json()["data"]["accepted"] is True
+
+    repeated_start = client.post(
+        f"/api/v1/sessions/{session_id}/hands",
+        json={"dealer_seat": 0, "request_id": "start-1"},
+    )
+    assert repeated_start.status_code == 201
+    assert repeated_start.json() == started.json()
+
+    repeated_action = client.post(
+        f"/api/v1/sessions/{session_id}/actions",
+        json={"actor_id": actor_id, "action": "call", "request_id": "action-1"},
+    )
+    assert repeated_action.status_code == 200
+    assert repeated_action.json() == first_action.json()
+
+    events = client.get(f"/api/v1/sessions/{session_id}/events?since_event_id=0&limit=50")
+    assert events.status_code == 200
+    event_types = [item["event_type"] for item in events.json()["data"]["events"]]
+    assert "action_applied" in event_types
+
+    hands = client.get(f"/api/v1/sessions/{session_id}/hands")
+    assert hands.status_code == 200
+    assert hands.json()["data"]["items"][0]["hand_id"] == hand_id

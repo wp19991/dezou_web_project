@@ -10,6 +10,7 @@ class CreateSessionRequest(BaseModel):
     big_blind: int = Field(ge=2)
     starting_stack: int = Field(ge=1)
     seed: int | None = Field(default=None, ge=0, le=2147483647)
+    user_participates: bool = False
     seat_names: list[str] | None = None
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
 

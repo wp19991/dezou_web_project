@@ -35,3 +35,12 @@ def _apply_compat_migrations(engine: Engine) -> None:
                     """
                 )
             )
+        if "user_participates" not in session_columns:
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE sessions
+                    ADD COLUMN user_participates INTEGER NOT NULL DEFAULT 0
+                    """
+                )
+            )

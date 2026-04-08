@@ -75,13 +75,22 @@ class TableKernel:
     def restore_hand(
         self,
         session_row: dict[str, Any],
-        session_seats: list[dict[str, Any]],
+        hand_seats: list[dict[str, Any]],
         hand_row: dict[str, Any],
         hand_events: list[dict[str, Any]],
     ) -> HandRuntime:
+        restored_seats = [
+            {
+                "seat_id": seat["seat_id"],
+                "seat_no": int(seat["seat_no"]),
+                "display_name": seat["display_name"],
+                "stack": int(seat["stack_start"]),
+            }
+            for seat in hand_seats
+        ]
         runtime, _ = self.start_hand(
             session_row,
-            session_seats,
+            restored_seats,
             int(hand_row["hand_no"]),
             int(hand_row["seed"]),
             int(hand_row["dealer_seat"]),
@@ -117,11 +126,25 @@ class TableKernel:
     ) -> tuple[HandRuntime, list[dict[str, Any]]]:
         started_at = to_iso()
         seat_count = len(session_seats)
+        if seat_count < 2:
+            raise AppError(
+                "NOT_ENOUGH_ACTIVE_SEATS",
+                "筹码足够参与本手的玩家不足 2 人，无法开局",
+                409,
+                {"active_seat_count": seat_count},
+            )
         seat_order = self._rotate_seats([seat["seat_no"] for seat in session_seats], dealer_seat)
         stacks = tuple(
-            next(seat["stack"] for seat in session_seats if seat["seat_no"] == seat_no)
+            next(self._seat_stack(seat) for seat in session_seats if seat["seat_no"] == seat_no)
             for seat_no in seat_order
         )
+        if any(stack <= 0 for stack in stacks):
+            raise AppError(
+                "INVALID_HAND_PARTICIPANTS",
+                "本手参与玩家的筹码必须大于 0",
+                409,
+                {"stacks": list(stacks)},
+            )
         state = NoLimitTexasHoldem.create_state(
             AUTOMATIONS,
             False,
@@ -145,8 +168,8 @@ class TableKernel:
                 seat_no=seat_row["seat_no"],
                 display_name=seat_row["display_name"],
                 player_index=player_index,
-                stack_start=seat_row["stack"],
-                current_stack=seat_row["stack"],
+                stack_start=self._seat_stack(seat_row),
+                current_stack=self._seat_stack(seat_row),
             )
             seat_by_id[tracker.seat_id] = tracker
             seat_by_player[player_index] = tracker
@@ -643,6 +666,11 @@ class TableKernel:
             raise AppError("SEAT_NOT_FOUND", "dealer seat 不存在", 404)
         pivot = ordered.index(dealer_seat)
         return ordered[pivot + 1 :] + ordered[: pivot + 1]
+
+    def _seat_stack(self, seat: dict[str, Any]) -> int:
+        if "stack" in seat and seat["stack"] is not None:
+            return int(seat["stack"])
+        return int(seat["stack_start"])
 
     def _action(
         self,

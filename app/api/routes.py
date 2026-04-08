@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -25,7 +27,13 @@ async def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"poll_interval_ms": request.app.state.settings.poll_interval_ms},
+        context={
+            "poll_interval_ms": request.app.state.settings.poll_interval_ms,
+            "bot_names_json": json.dumps(
+                request.app.state.settings.bot_names,
+                ensure_ascii=False,
+            ),
+        },
     )
 
 

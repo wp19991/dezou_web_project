@@ -242,11 +242,11 @@ class Store:
                     """
                     INSERT INTO sessions (
                         session_id, seat_count, small_blind, big_blind, starting_stack,
-                        rng_seed,
+                        rng_seed, user_participates,
                         phase, current_hand_id, next_dealer_seat, created_at, updated_at
                     ) VALUES (
                         :session_id, :seat_count, :small_blind, :big_blind, :starting_stack,
-                        :rng_seed,
+                        :rng_seed, :user_participates,
                         :phase, :current_hand_id, :next_dealer_seat, :created_at, :updated_at
                     )
                     """

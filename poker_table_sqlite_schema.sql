@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     big_blind           INTEGER NOT NULL CHECK (big_blind > small_blind),
     starting_stack      INTEGER NOT NULL CHECK (starting_stack >= big_blind * 20),
     rng_seed            INTEGER NOT NULL DEFAULT 0 CHECK (rng_seed >= 0),
+    user_participates   INTEGER NOT NULL DEFAULT 0 CHECK (user_participates IN (0, 1)),
     phase               TEXT NOT NULL CHECK (phase IN (
                             'waiting_start',
                             'running',

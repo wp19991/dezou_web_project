@@ -1,6 +1,6 @@
 # Player API
 
-面向“玩家客户端轮询接入”的完整说明。只看本文档，就可以把另一个客户端接到当前德州扑克服务。
+面向“玩家客户端轮询接入”的完整说明。本文档描述的是后端通用 API，而不是内置网页的前端限制。
 
 本文档默认服务地址为 `http://localhost:8000`，所有请求和响应都使用 UTF-8 JSON。
 
@@ -23,7 +23,7 @@
 这意味着：
 
 - 只要知道 `viewer_name`，就能请求该玩家视角的状态
-- 只要知道 `actor_name` / `speaker_name`，就能代表该玩家提交动作或聊天
+- 只要知道 `actor_name / speaker_name`，就能代表该玩家提交动作或聊天
 
 所以它适合：
 
@@ -35,11 +35,9 @@
 
 ## 2. 可见性规则
 
-这是玩家客户端最重要的部分。
-
-- 创建 Session 时，每个座位必须有唯一玩家名。
-- 玩家客户端读取状态时，必须带 `viewer_name`。
-- `viewer_name` 会决定哪些牌可见。
+- 创建 session 时，每个座位必须有唯一玩家名
+- 玩家客户端读取状态时，必须带 `viewer_name`
+- `viewer_name` 会决定 hole cards 的可见性
 
 可见信息：
 
@@ -60,12 +58,14 @@
 
 特殊说明：
 
-- `GET /api/v1/replays/{hand_id}` 在不传 `viewer_name` 时，会按“公开回放”处理：
+- `GET /api/v1/replays/{hand_id}` 不传 `viewer_name` 时，会按公开 replay 处理：
   - 只有进入摊牌公开的牌可见
   - 非摊牌玩家的手牌不会公开
 - 如果传了 `viewer_name`：
   - 自己的 hole cards 仍然可见
   - 其他未公开牌仍然不可见
+
+注意：内置网页在 `用户参与` 模式下会自行隐藏“当前手时间线”，但后端 API 仍然会照常返回 `current_hand.timeline`。
 
 ## 3. 典型轮询流程
 
@@ -86,6 +86,7 @@ Content-Type: application/json
   "big_blind": 100,
   "starting_stack": 5000,
   "seed": 1234,
+  "user_participates": true,
   "seat_names": ["Alice", "Bob", "Carol"]
 }
 ```
@@ -103,6 +104,7 @@ Content-Type: application/json
     "big_blind": 100,
     "starting_stack": 5000,
     "session_seed": 1234,
+    "user_participates": true,
     "seats": [
       {"seat_id": "seat_0", "seat_no": 0, "display_name": "Alice", "stack": 5000},
       {"seat_id": "seat_1", "seat_no": 1, "display_name": "Bob", "stack": 5000},
@@ -117,7 +119,8 @@ Content-Type: application/json
 
 - `seat_names` 长度必须等于 `seat_count`
 - `seat_names` 必须唯一
-- 之后玩家客户端用的是 `viewer_name`，不是固定 `seat_id`
+- `user_participates` 只是 session 元数据，供内置网页恢复模式；通用客户端可忽略
+- 之后玩家客户端主要用 `viewer_name`，不是固定 `seat_id`
 
 ### 3.2 开始新一手
 
@@ -136,7 +139,7 @@ Content-Type: application/json
 
 说明：
 
-- `seed` 是 Session 级的
+- `seed` 是 session 级的
 - 每一手的真实 `hand seed` 由后端自动派生
 
 ### 3.3 玩家轮询当前状态
@@ -156,6 +159,7 @@ GET /api/v1/sessions/table-demo-01/state?viewer_name=Alice
     "session_id": "table-demo-01",
     "phase": "waiting_actor_action",
     "session_seed": 1234,
+    "user_participates": true,
     "viewer": {
       "viewer_name": "Alice",
       "viewer_seat_id": "seat_0",
@@ -245,7 +249,7 @@ GET /api/v1/sessions/table-demo-01/state?viewer_name=Alice
 
 - 从 `current_hand.available_actions` 里选动作
 - 不要自己猜动作是否合法
-- `bet` / `raise` 必须使用后端返回的 `min` / `max`
+- `bet / raise` 必须使用后端返回的 `min / max`
 
 ### 3.5 提交动作
 
@@ -273,34 +277,14 @@ Content-Type: application/json
 }
 ```
 
-成功响应：
-
-```json
-{
-  "ok": true,
-  "data": {
-    "accepted": true,
-    "phase": "waiting_actor_action",
-    "applied_action": {
-      "actor_id": "seat_0",
-      "street": "preflop",
-      "action": "raise",
-      "amount": 300
-    },
-    "next_actor_id": "seat_1",
-    "hand_ended": false
-  }
-}
-```
-
 动作说明：
 
-- `fold`: 弃牌
-- `check`: 过牌
-- `call`: 跟注
-- `bet`: 下注到指定总额
-- `raise`: 加注到指定总额
-- `all_in`: 全下
+- `fold`
+- `check`
+- `call`
+- `bet`
+- `raise`
+- `all_in`
 
 重要约束：
 
@@ -345,7 +329,7 @@ Content-Type: application/json
 
 ### 3.7 当前这手的公共历史
 
-`GET /state?viewer_name=...` 已经直接返回本手的三类历史，不必自己再拼：
+`GET /state?viewer_name=...` 已经直接返回本手的三类历史：
 
 - `current_hand.action_history`
 - `current_hand.chat_messages`
@@ -385,7 +369,7 @@ GET /api/v1/sessions/table-demo-01/events?since_event_id=0&limit=200
 GET /api/v1/sessions/table-demo-01/hands
 ```
 
-返回每手的摘要：
+返回每手摘要：
 
 - `hand_id`
 - `hand_no`
@@ -407,10 +391,10 @@ GET /api/v1/replays/{hand_id}?viewer_name=Alice
 
 回放返回：
 
-- `actions`: 动作序列
-- `chat_messages`: 聊天序列
-- `timeline`: 按时间排序的完整事件流
-- `final_state`: 该手最终状态
+- `actions`
+- `chat_messages`
+- `timeline`
+- `final_state`
 
 回放中的手牌可见性规则和 `/state` 一致。
 
@@ -518,32 +502,38 @@ GET /api/v1/replays/{hand_id}?viewer_name=Alice
 
 ### 6.1 玩家相关
 
-- `viewer_name`: 当前玩家名
-- `viewer_seat_id`: 当前玩家的 seat id
-- `viewer_seat_no`: 当前玩家的位置
+- `viewer_name`
+- `viewer_seat_id`
+- `viewer_seat_no`
 
-### 6.2 牌局相关
+### 6.2 session 相关
 
-- `hand_id`: 当前手唯一标识
-- `hand_no`: 第几手
-- `street`: `preflop / flop / turn / river / showdown`
-- `board_cards`: 当前公共牌
-- `pot_total`: 当前底池
+- `session_id`
+- `session_seed`
+- `user_participates`
 
-### 6.3 玩家动作相关
+### 6.3 牌局相关
 
-- `actor_id`: 当前轮到谁
-- `available_actions`: 后端判定的合法动作
-- `to_call`: 当前需要跟注额
-- `min_bet_to`: 最小下注到多少
-- `min_raise_to`: 最小加注到多少
+- `hand_id`
+- `hand_no`
+- `street`
+- `board_cards`
+- `pot_total`
 
-### 6.4 当前手历史相关
+### 6.4 玩家动作相关
 
-- `turn_order`: 当前手顺位
-- `action_history`: 当前手动作历史
-- `chat_messages`: 当前手聊天记录
-- `timeline`: 当前手完整事件流
+- `actor_id`
+- `available_actions`
+- `to_call`
+- `min_bet_to`
+- `min_raise_to`
+
+### 6.5 当前手历史相关
+
+- `turn_order`
+- `action_history`
+- `chat_messages`
+- `timeline`
 
 ## 7. 相关接口总表
 

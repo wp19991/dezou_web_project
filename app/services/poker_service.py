@@ -63,6 +63,7 @@ class PokerService:
             "big_blind": request.big_blind,
             "starting_stack": request.starting_stack,
             "rng_seed": session_seed,
+            "user_participates": int(request.user_participates),
             "phase": "waiting_start",
             "current_hand_id": None,
             "next_dealer_seat": 0,
@@ -77,6 +78,7 @@ class PokerService:
             "big_blind": request.big_blind,
             "starting_stack": request.starting_stack,
             "session_seed": session_seed,
+            "user_participates": request.user_participates,
             "seats": [
                 {
                     "seat_id": row["seat_id"],
@@ -102,6 +104,7 @@ class PokerService:
                     "big_blind": request.big_blind,
                     "starting_stack": request.starting_stack,
                     "session_seed": session_seed,
+                    "user_participates": request.user_participates,
                 },
                 "created_at": created_at,
             }
@@ -133,6 +136,7 @@ class PokerService:
                 "big_blind": int(session_row["big_blind"]),
                 "starting_stack": int(session_row["starting_stack"]),
                 "session_seed": int(session_row["rng_seed"]),
+                "user_participates": bool(session_row.get("user_participates", 0)),
                 "next_dealer_seat": int(session_row["next_dealer_seat"]),
                 "seats": [
                     {
@@ -172,11 +176,37 @@ class PokerService:
                 raise AppError("HAND_ALREADY_RUNNING", "当前已有未结束手牌", 409)
 
             session_seats = self.store.fetch_session_seats(session_id)
+            user_seat = self._participant_user_seat(session_row, session_seats)
+            if user_seat and int(user_seat["stack"]) <= 0:
+                raise AppError(
+                    "USER_OUT_OF_CHIPS",
+                    f"{user_seat['display_name']} 筹码已用尽，无法开始新一手",
+                    409,
+                    {
+                        "seat_id": user_seat["seat_id"],
+                        "seat_no": int(user_seat["seat_no"]),
+                        "stack": int(user_seat["stack"]),
+                    },
+                )
+
+            active_seats = self._active_session_seats(session_seats)
+            if len(active_seats) < 2:
+                message = "筹码足够参与下一手的玩家不足 2 人，无法开始新一手"
+                if user_seat and int(user_seat["stack"]) > 0:
+                    message = "除玩家外没有其它仍有筹码的玩家，无法开始新一手"
+                raise AppError(
+                    "NOT_ENOUGH_ACTIVE_SEATS",
+                    message,
+                    409,
+                    {"active_seat_count": len(active_seats)},
+                )
+
             hand_no = self.store.next_hand_no(session_id)
             hand_seed = self._derive_hand_seed(int(session_row["rng_seed"]), hand_no)
+            dealer_seat = self._resolve_active_dealer_seat(dealer_seat, active_seats)
             runtime, events = self.kernel.start_hand(
                 session_row,
-                session_seats,
+                active_seats,
                 hand_no,
                 hand_seed,
                 dealer_seat,
@@ -187,7 +217,7 @@ class PokerService:
                 "session_id": session_id,
                 "phase": "waiting_actor_action" if runtime.actor_id else "hand_ended",
                 "current_hand_id": runtime.hand_id,
-                "next_dealer_seat": (dealer_seat + 1) % seat_count,
+                "next_dealer_seat": self._next_active_dealer_seat(dealer_seat, active_seats),
                 "updated_at": updated_at,
             }
             data = {
@@ -477,12 +507,12 @@ class PokerService:
         if not hand_row or hand_row["phase"] != "running":
             return runtime
 
-        session_seats = self.store.fetch_session_seats(session_id)
+        hand_seats = self.store.fetch_hand_seats(hand_row["hand_id"])
         hand_events = [
             self.store.deserialize_event(row)
             for row in self.store.list_hand_events(hand_row["hand_id"])
         ]
-        restored = self.kernel.restore_hand(session_row, session_seats, hand_row, hand_events)
+        restored = self.kernel.restore_hand(session_row, hand_seats, hand_row, hand_events)
         self.registry.set_runtime(session_id, restored)
         return restored
 
@@ -754,3 +784,44 @@ class PokerService:
             if seat["seat_id"] == seat_id:
                 return str(seat["display_name"])
         return seat_id
+
+    def _participant_user_seat(
+        self,
+        session_row: dict[str, Any],
+        session_seats: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        if not bool(session_row.get("user_participates", 0)):
+            return None
+        for seat in sorted(session_seats, key=lambda item: int(item["seat_no"])):
+            if int(seat["seat_no"]) == 0:
+                return seat
+        return None
+
+    def _active_session_seats(self, session_seats: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            seat
+            for seat in sorted(session_seats, key=lambda item: int(item["seat_no"]))
+            if int(seat["stack"]) > 0
+        ]
+
+    def _resolve_active_dealer_seat(
+        self,
+        requested_dealer_seat: int,
+        active_seats: list[dict[str, Any]],
+    ) -> int:
+        active_seat_nos = [int(seat["seat_no"]) for seat in active_seats]
+        for seat_no in active_seat_nos:
+            if seat_no >= requested_dealer_seat:
+                return seat_no
+        return active_seat_nos[0]
+
+    def _next_active_dealer_seat(
+        self,
+        current_dealer_seat: int,
+        active_seats: list[dict[str, Any]],
+    ) -> int:
+        active_seat_nos = [int(seat["seat_no"]) for seat in active_seats]
+        if current_dealer_seat not in active_seat_nos:
+            return active_seat_nos[0]
+        pivot = active_seat_nos.index(current_dealer_seat)
+        return active_seat_nos[(pivot + 1) % len(active_seat_nos)]

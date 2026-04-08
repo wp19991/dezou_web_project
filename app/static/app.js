@@ -58,18 +58,45 @@ const CHANNEL_META = {
   chat: "聊天",
 };
 
+function parseConfiguredBotNames() {
+  const node = document.getElementById("botNamesData");
+  if (!node?.textContent) {
+    return ["阿岚", "老岩", "唐梨", "温策", "小顾"];
+  }
+  try {
+    const parsed = JSON.parse(node.textContent);
+    if (Array.isArray(parsed) && parsed.length) {
+      return parsed.map((item) => String(item));
+    }
+  } catch (error) {
+    console.error("Failed to parse bot name pool", error);
+  }
+  return ["阿岚", "老岩", "唐梨", "温策", "小顾"];
+}
+
+const configuredBotNames = parseConfiguredBotNames();
+
 let sessionId = "";
 let lastEventId = 0;
 let pollHandle = null;
 let currentState = null;
 let selectedActionSpec = null;
-let seatNameDrafts = [];
 let sessionEvents = [];
 let recentSeatChats = {};
 let handIndex = new Map();
+let sessionUserParticipates = false;
+let sessionUserName = "";
+let botNameOrder = shuffleArray(configuredBotNames);
+let renderSignatures = {
+  board: "",
+  actions: "",
+  speaker: "",
+  sessionMeta: "",
+};
 
 const banner = document.getElementById("banner");
 const sessionMeta = document.getElementById("sessionMeta");
+const copySessionBtn = document.getElementById("copySessionBtn");
 const tableArea = document.getElementById("tableArea");
 const boardArea = document.getElementById("boardArea");
 const actionMeta = document.getElementById("actionMeta");
@@ -79,19 +106,28 @@ const actionAmount = document.getElementById("actionAmount");
 const timeline = document.getElementById("timeline");
 const historyList = document.getElementById("historyList");
 const replayView = document.getElementById("replayView");
-const speakerId = document.getElementById("speakerId");
 const selectedActionHint = document.getElementById("selectedActionHint");
 const submitAmountAction = document.getElementById("submitAmountAction");
 const createSessionForm = document.getElementById("createSessionForm");
 const seatCountInput = createSessionForm.querySelector('input[name="seat_count"]');
-const seatNamesList = document.getElementById("seatNamesList");
 const sessionIdInput = createSessionForm.querySelector('input[name="session_id"]');
 const seedInput = createSessionForm.querySelector('input[name="seed"]');
 const randomSessionBtn = document.getElementById("randomSessionBtn");
 const loadSessionBtn = document.getElementById("loadSessionBtn");
 const randomSeedBtn = document.getElementById("randomSeedBtn");
-const sessionOverview = document.getElementById("sessionOverview");
+const sessionSetupPanel = document.getElementById("sessionSetupPanel");
+const startHandPanel = document.getElementById("startHandPanel");
 const startHandBtn = document.getElementById("startHandBtn");
+const interactionGrid = document.getElementById("interactionGrid");
+const bottomGrid = document.getElementById("bottomGrid");
+const timelinePanel = document.getElementById("timelinePanel");
+const timelinePanelNote = document.getElementById("timelinePanelNote");
+const userParticipatesToggle = document.getElementById("userParticipatesToggle");
+const userNameField = document.getElementById("userNameField");
+const userNameInput = createSessionForm.querySelector('input[name="user_name"]');
+const seatPlanPreview = document.getElementById("seatPlanPreview");
+const botNamePool = document.getElementById("botNamePool");
+const speakerNameDisplay = document.getElementById("speakerNameDisplay");
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -125,8 +161,27 @@ function showBanner(message) {
   showBanner.timer = setTimeout(() => banner.classList.add("hidden"), 2600);
 }
 
-function defaultSeatName(index) {
-  return `玩家 ${index + 1}`;
+function defaultUserName() {
+  return "玩家";
+}
+
+function shuffleArray(items) {
+  const next = [...items];
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
+  }
+  return next;
+}
+
+function generateRandomSessionId() {
+  const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+  const suffix = Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
+  return `table-${suffix}`;
+}
+
+function generateRandomSeed() {
+  return String(Math.floor(Math.random() * 2_147_483_647));
 }
 
 function formatDateTime(value) {
@@ -189,6 +244,64 @@ function allKnownSeats() {
   return Array.from(seatMap.values()).sort((left, right) => left.seat_no - right.seat_no);
 }
 
+function seatLimitForMode(userParticipates = userParticipatesToggle.checked) {
+  return userParticipates ? 6 : 5;
+}
+
+function clampSeatCount(value, userParticipates = userParticipatesToggle.checked) {
+  const limit = seatLimitForMode(userParticipates);
+  return Math.max(2, Math.min(limit, Number(value) || 2));
+}
+
+function currentDraftUserName() {
+  return (userNameInput.value || "").trim() || defaultUserName();
+}
+
+function participantSeatFromState(data) {
+  return [...(data?.seats || [])]
+    .sort((left, right) => left.seat_no - right.seat_no)
+    .find((seat) => Number(seat.seat_no) === 0) || null;
+}
+
+function resolveUserNameFromState(data) {
+  return participantSeatFromState(data)?.display_name || data?.viewer?.viewer_name || defaultUserName();
+}
+
+function applySessionContext(data) {
+  sessionUserParticipates = Boolean(data?.user_participates);
+  sessionUserName = sessionUserParticipates ? resolveUserNameFromState(data) : "";
+}
+
+function buildStatePath(targetSessionId, userParticipates = sessionUserParticipates, viewerName = sessionUserName) {
+  const base = `/api/v1/sessions/${targetSessionId}/state`;
+  if (!userParticipates || !viewerName) {
+    return base;
+  }
+  return `${base}?viewer_name=${encodeURIComponent(viewerName)}`;
+}
+
+function buildReplayPath(handId, userParticipates = sessionUserParticipates, viewerName = sessionUserName) {
+  const base = `/api/v1/replays/${handId}`;
+  if (!userParticipates || !viewerName) {
+    return base;
+  }
+  return `${base}?viewer_name=${encodeURIComponent(viewerName)}`;
+}
+
+function resetReplayPlaceholder(message = "🪄 选择一手已结束牌局查看回放。") {
+  replayView.innerHTML = `<div class="empty-state">${message}</div>`;
+  replayView.dataset.handId = "";
+}
+
+function resetRenderSignatures() {
+  renderSignatures = {
+    board: "",
+    actions: "",
+    speaker: "",
+    sessionMeta: "",
+  };
+}
+
 function updateHandIndex(items = []) {
   items.forEach((item) => {
     if (!item?.hand_id) {
@@ -220,14 +333,56 @@ function rememberSessionEvents(events, replace = false) {
     .slice(-240);
 }
 
-function generateRandomSessionId() {
-  const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
-  const suffix = Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
-  return `table-${suffix}`;
+function renderBotPool() {
+  botNamePool.innerHTML = configuredBotNames
+    .map((name) => `<span class="badge">🎭 ${escapeHtml(name)}</span>`)
+    .join("");
 }
 
-function generateRandomSeed() {
-  return String(Math.floor(Math.random() * 2_147_483_647));
+function previewSeatNames() {
+  const userParticipates = userParticipatesToggle.checked;
+  const seatCount = clampSeatCount(seatCountInput.value, userParticipates);
+  const botCount = seatCount - (userParticipates ? 1 : 0);
+  const bots = botNameOrder.slice(0, botCount);
+  return userParticipates ? [currentDraftUserName(), ...bots] : bots;
+}
+
+function renderSeatPlanPreview() {
+  const seatNames = previewSeatNames();
+  const userParticipates = userParticipatesToggle.checked;
+  seatPlanPreview.innerHTML = seatNames
+    .map((name, index) => {
+      const isUser = userParticipates && index === 0;
+      return `
+        <div class="seat-plan-item ${isUser ? "user" : ""}">
+          <span class="seat-plan-role">${isUser ? "🙋 用户位" : "🎭 系统角色"} · ${seatNoLabel(index)}</span>
+          <span class="seat-plan-name">${escapeHtml(name)}</span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function renderCreationForm() {
+  const userParticipates = userParticipatesToggle.checked;
+  const nextLimit = seatLimitForMode(userParticipates);
+  seatCountInput.max = String(nextLimit);
+  seatCountInput.value = String(clampSeatCount(seatCountInput.value, userParticipates));
+  userNameField.classList.toggle("hidden", !userParticipates);
+  renderSeatPlanPreview();
+  renderBotPool();
+}
+
+function syncLayoutVisibility() {
+  const hasSession = Boolean(sessionId);
+  sessionSetupPanel.classList.toggle("hidden", hasSession);
+  startHandPanel.classList.toggle("hidden", !hasSession);
+  interactionGrid.classList.toggle("hidden", hasSession && !sessionUserParticipates);
+  timelinePanel.classList.toggle("hidden", hasSession && sessionUserParticipates);
+  bottomGrid.classList.toggle("participant-bottom-grid", hasSession && sessionUserParticipates);
+  timelinePanelNote.textContent = sessionUserParticipates
+    ? "玩家参与模式不显示当前手时间线，历史手请到右侧查看回放"
+    : "仅显示当前手事件，历史手请到右侧历史手牌查看";
 }
 
 function hydrateSessionForm(data) {
@@ -235,7 +390,7 @@ function hydrateSessionForm(data) {
     return;
   }
   sessionIdInput.value = data.session_id || "";
-  seatCountInput.value = data.seat_count ?? seatCountInput.value;
+  seatCountInput.value = String(data.seat_count ?? seatCountInput.value);
   createSessionForm.querySelector('input[name="small_blind"]').value =
     data.small_blind ?? createSessionForm.querySelector('input[name="small_blind"]').value;
   createSessionForm.querySelector('input[name="big_blind"]').value =
@@ -243,113 +398,207 @@ function hydrateSessionForm(data) {
   createSessionForm.querySelector('input[name="starting_stack"]').value =
     data.starting_stack ?? createSessionForm.querySelector('input[name="starting_stack"]').value;
   seedInput.value = data.session_seed ?? seedInput.value;
-  seatNameDrafts = [...(data.seats || [])]
-    .sort((left, right) => left.seat_no - right.seat_no)
-    .map((seat) => seat.display_name);
-  renderSeatNameInputs(false);
+  userParticipatesToggle.checked = Boolean(data.user_participates);
+  userNameInput.value = Boolean(data.user_participates) ? resolveUserNameFromState(data) : defaultUserName();
+  renderCreationForm();
 }
 
-function renderSessionOverview(data) {
-  if (!data) {
-    sessionOverview.innerHTML = '<div class="empty-state compact-empty">创建或载入牌桌后，可在这里查看当前进度并继续对局。</div>';
+function winnerSummaryText(winners, seats = []) {
+  if (!(winners || []).length) {
+    return "暂无赢家信息";
+  }
+  return winners
+    .map((winner) => `${seatDisplayName(winner.seat_id, seats)} +${winner.win_amount}`)
+    .join(" · ");
+}
+
+function renderWinnerBadges(winners, seats = []) {
+  return (winners || [])
+    .map(
+      (winner) =>
+        `<span class="badge winner-badge">🏆 ${escapeHtml(seatDisplayName(winner.seat_id, seats))} +${winner.win_amount}</span>`
+    )
+    .join("");
+}
+
+function sessionModeLabel() {
+  return sessionUserParticipates ? "用户参与" : "旁观模式";
+}
+
+function isAmountAction(action) {
+  return action === "bet" || action === "raise";
+}
+
+function normalizeActionNumber(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  return Number(value);
+}
+
+function sameActionSpec(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+  return left.action === right.action
+    && normalizeActionNumber(left.min) === normalizeActionNumber(right.min)
+    && normalizeActionNumber(left.max) === normalizeActionNumber(right.max)
+    && normalizeActionNumber(left.default) === normalizeActionNumber(right.default);
+}
+
+function findMatchingActionSpec(hand, actionSpec) {
+  if (!hand || !actionSpec) {
+    return null;
+  }
+  return (hand.available_actions || []).find((candidate) => sameActionSpec(candidate, actionSpec)) || null;
+}
+
+function actionRenderSignature(data) {
+  const hand = data?.current_hand;
+  return JSON.stringify({
+    userParticipates: sessionUserParticipates,
+    userName: sessionUserName,
+    viewer: data?.viewer
+      ? {
+          viewer_name: data.viewer.viewer_name,
+          can_act: data.viewer.can_act,
+          is_folded: data.viewer.is_folded,
+        }
+      : null,
+    hand: hand
+      ? {
+          hand_id: hand.hand_id,
+          actor_id: hand.actor_id,
+          to_call: hand.to_call,
+          min_bet_to: hand.min_bet_to,
+          min_raise_to: hand.min_raise_to,
+          available_actions: hand.available_actions || [],
+          winners: hand.winners || [],
+          showdown_seat_ids: hand.showdown_seat_ids || [],
+        }
+      : null,
+  });
+}
+
+function boardRenderSignature(hand) {
+  return JSON.stringify(hand || null);
+}
+
+function sessionMetaSignature(data) {
+  const hand = data?.current_hand;
+  return JSON.stringify({
+    session_id: data?.session_id || "",
+    user_participates: Boolean(data?.user_participates),
+    user_name: sessionUserName,
+    session_seed: data?.session_seed ?? null,
+    phase: data?.phase || "",
+    last_event_id: data?.last_event_id ?? 0,
+    hand: hand
+      ? {
+          hand_id: hand.hand_id,
+          hand_no: hand.hand_no,
+          street: hand.street,
+          seed: hand.seed,
+          winners: hand.winners || [],
+          seats: hand.seats || [],
+        }
+      : null,
+  });
+}
+
+function speakerRenderSignature() {
+  return JSON.stringify({
+    sessionId: sessionId || "",
+    sessionUserParticipates,
+    sessionUserName,
+  });
+}
+
+function participantPollSignature(data) {
+  return JSON.stringify({
+    session_id: data?.session_id || "",
+    phase: data?.phase || "",
+    last_event_id: data?.last_event_id ?? 0,
+    hand_id: data?.current_hand?.hand_id || "",
+    user_participates: Boolean(data?.user_participates),
+    user_name: resolveUserNameFromState(data),
+  });
+}
+
+function updateStartHandButton(data) {
+  if (!data || !sessionId) {
     startHandBtn.disabled = true;
     startHandBtn.textContent = "🃏 开始新一手";
+    startHandBtn.title = "请先创建或载入牌桌";
     return;
   }
-
-  const seats = data.current_hand?.seats || data.seats || [];
-  const currentHand = data.current_hand;
-  const nextDealerSeat = data.phase === "waiting_actor_action" && currentHand
-    ? currentHand.dealer_seat
-    : data.next_dealer_seat;
-  const phaseDescription = currentHand
-    ? `${phaseLabel(data.phase)} · 第 ${currentHand.hand_no} 手`
-    : `${phaseLabel(data.phase)} · 尚未开始`;
-  const actionDescription = currentHand?.actor_id
-    ? seatDisplayWithNo(currentHand.actor_id, seats)
-    : (currentHand?.winners?.length
-      ? winnerSummaryText(currentHand.winners, seats)
-      : "等待开始新一手");
-
-  sessionOverview.innerHTML = `
-    <div class="chip-line session-chip-line">
-      <span class="badge">🧭 ${escapeHtml(data.session_id)}</span>
-      <span class="badge">🎲 牌桌种子 ${data.session_seed}</span>
-      <span class="badge">🎩 下一庄 ${seatNoLabel(nextDealerSeat)}</span>
-    </div>
-    <div class="session-stat-grid">
-      <div class="session-stat">
-        <span class="session-stat-label">当前阶段</span>
-        <strong>${escapeHtml(phaseDescription)}</strong>
-      </div>
-      <div class="session-stat">
-        <span class="session-stat-label">当前进度</span>
-        <strong>${escapeHtml(actionDescription)}</strong>
-      </div>
-      <div class="session-stat">
-        <span class="session-stat-label">盲注 / 座位</span>
-        <strong>${data.small_blind}/${data.big_blind} · ${data.seat_count} 人桌</strong>
-      </div>
-      <div class="session-stat">
-        <span class="session-stat-label">玩家</span>
-        <strong>${escapeHtml((data.seats || []).map((seat) => seat.display_name).join(" · "))}</strong>
-      </div>
-    </div>
-  `;
-
-  startHandBtn.disabled = !sessionId || data.phase === "waiting_actor_action";
+  startHandBtn.disabled = data.phase === "waiting_actor_action";
   startHandBtn.textContent =
     data.phase === "waiting_actor_action" ? "⏳ 当前手未结束" : "🃏 开始新一手";
   startHandBtn.title =
     data.phase === "waiting_actor_action"
-      ? "当前有未完成的手牌，请继续完成本手"
+      ? "当前有未完成手牌，请继续完成本手"
       : `系统会自动轮到 ${seatNoLabel(data.next_dealer_seat)} 当庄`;
 }
 
-function syncSeatNameDrafts() {
-  Array.from(seatNamesList.querySelectorAll("input[data-seat-index]")).forEach((input) => {
-    const seatIndex = Number(input.dataset.seatIndex);
-    seatNameDrafts[seatIndex] = input.value.trim() || defaultSeatName(seatIndex);
-  });
-}
-
-function renderSeatNameInputs(syncFromDom = true) {
-  if (syncFromDom) {
-    syncSeatNameDrafts();
+function setSessionMeta(data) {
+  if (!data) {
+    sessionMeta.textContent = "🧭 未创建牌桌";
+    copySessionBtn.classList.add("hidden");
+    copySessionBtn.disabled = true;
+    copySessionBtn.title = "当前没有可复制的牌桌编号";
+    return;
   }
-  const count = Math.min(9, Math.max(2, Number(seatCountInput.value) || 2));
-  seatNamesList.innerHTML = Array.from({ length: count }, (_, index) => {
-    const value = seatNameDrafts[index] || defaultSeatName(index);
-    return `
-      <label class="seat-name-item">
-        <span>🪑 ${index + 1} 号位</span>
-        <input
-          type="text"
-          maxlength="32"
-          value="${escapeHtml(value)}"
-          data-seat-index="${index}"
-          placeholder="${defaultSeatName(index)}"
-        >
-      </label>
-    `;
-  }).join("");
-}
-
-function collectSeatNames() {
-  syncSeatNameDrafts();
-  return Array.from({ length: Math.min(9, Math.max(2, Number(seatCountInput.value) || 2)) }, (_, index) => {
-    return seatNameDrafts[index] || defaultSeatName(index);
-  });
+  const winnerText =
+    data.phase === "hand_ended" && data.current_hand?.winners?.length
+      ? ` · 🏆 ${escapeHtml(winnerSummaryText(data.current_hand.winners, data.current_hand.seats || []))}`
+      : "";
+  const handInfo = data.current_hand
+    ? `🃏 第 ${data.current_hand.hand_no} 手 · ${streetLabel(data.current_hand.street)} · 🎲 本手种子 ${data.current_hand.seed}`
+    : "🛋️ 暂无进行中牌局";
+  const userInfo = sessionUserParticipates ? ` · 🙋 ${escapeHtml(sessionUserName)}` : "";
+  sessionMeta.innerHTML = `
+    🧭 牌桌 <strong>${escapeHtml(data.session_id)}</strong>
+    · 模式 <strong>${escapeHtml(sessionModeLabel())}</strong>${userInfo}
+    · 🎲 牌桌种子 <strong>${data.session_seed}</strong>
+    · 阶段 <strong>${escapeHtml(phaseLabel(data.phase))}</strong>
+    · ${handInfo}
+    · 事件 ${data.last_event_id}${winnerText}
+  `;
+  copySessionBtn.classList.toggle("hidden", !sessionId);
+  copySessionBtn.disabled = !sessionId;
+  copySessionBtn.title = sessionId ? `复制牌桌编号 ${sessionId}` : "当前没有可复制的牌桌编号";
 }
 
 function showActionHint(message) {
-  selectedActionHint.textContent = message;
+  selectedActionHint.innerHTML = message;
   selectedActionHint.classList.remove("hidden");
 }
 
 function hideActionHint() {
   selectedActionHint.textContent = "";
   selectedActionHint.classList.add("hidden");
+}
+
+function resetAmountAction() {
+  selectedActionSpec = null;
+  amountBox.classList.add("hidden");
+  actionAmount.value = "";
+  actionAmount.min = 0;
+  actionAmount.max = "";
+  hideActionHint();
+}
+
+function showAmountAction(actionSpec, draftValue) {
+  selectedActionSpec = actionSpec;
+  amountBox.classList.remove("hidden");
+  actionAmount.min = actionSpec.min ?? 0;
+  actionAmount.max = actionSpec.max ?? "";
+  actionAmount.value = draftValue !== undefined
+    ? draftValue
+    : String(actionSpec.default ?? actionSpec.min ?? "");
+  selectedActionHint.innerHTML = `🧠 已选择 <strong>${actionLabel(actionSpec.action)}</strong>，请输入 ${actionSpec.min ?? "-"} ~ ${actionSpec.max ?? "-"} 的金额后确认。`;
+  selectedActionHint.classList.remove("hidden");
 }
 
 function parseCard(cardCode) {
@@ -371,7 +620,11 @@ function parseCard(cardCode) {
 function renderCard(cardCode) {
   const parsed = parseCard(cardCode);
   if (!parsed) {
-    return `<span class="playing-card"><span class="suit-center">🂠</span></span>`;
+    return `
+      <span class="playing-card card-back" aria-label="背面牌">
+        <img src="/static/card-back.svg" alt="" loading="lazy" decoding="async">
+      </span>
+    `;
   }
   return `
     <span class="playing-card ${parsed.suit.className}" title="${escapeHtml(parsed.suit.name)} ${escapeHtml(parsed.rank)}">
@@ -388,51 +641,8 @@ function renderCardRow(cards, extraClass = "") {
   return `<div class="${classes}">${(cards || []).map((card) => renderCard(card)).join("")}</div>`;
 }
 
-function renderWinnerBadges(winners, seats = []) {
-  return (winners || [])
-    .map(
-      (winner) =>
-        `<span class="badge winner-badge">🏆 ${escapeHtml(seatDisplayName(winner.seat_id, seats))} +${winner.win_amount}</span>`
-    )
-    .join("");
-}
-
-function winnerSummaryText(winners, seats = []) {
-  if (!(winners || []).length) {
-    return "暂无赢家信息";
-  }
-  return winners
-    .map((winner) => `${seatDisplayName(winner.seat_id, seats)} +${winner.win_amount}`)
-    .join(" · ");
-}
-
-function setSessionMeta(data) {
-  const winnerText =
-    data.phase === "hand_ended" && data.current_hand?.winners?.length
-      ? ` · 🏆 ${escapeHtml(winnerSummaryText(data.current_hand.winners, data.current_hand.seats || []))}`
-      : "";
-  const handInfo = data.current_hand
-    ? `🃏 第 ${data.current_hand.hand_no} 手 · ${streetLabel(data.current_hand.street)} · 🎲 本手种子 ${data.current_hand.seed}`
-    : "🛋️ 暂无进行中牌局";
-  sessionMeta.innerHTML = `
-    🧭 牌桌 <strong>${escapeHtml(data.session_id)}</strong>
-    · 🎲 牌桌种子 <strong>${data.session_seed}</strong>
-    · 阶段 <strong>${escapeHtml(phaseLabel(data.phase))}</strong>
-    · ${handInfo}
-    · 事件 ${data.last_event_id}${winnerText}
-  `;
-}
-
-function renderState(data) {
-  currentState = data;
-  lastEventId = data.last_event_id;
-  updateHandIndex();
-  setSessionMeta(data);
-  renderSessionOverview(data);
-  renderBoardAndSeats(data.current_hand);
-  renderActions(data.current_hand);
-  renderSpeakerOptions(data.current_hand);
-  return data;
+function renderFaceDownCardRow(count = 2, extraClass = "") {
+  return renderCardRow(Array.from({ length: count }, () => null), extraClass);
 }
 
 function seatBadges(hand, seat) {
@@ -513,18 +723,7 @@ function renderSeatSpeech(seatId) {
   `;
 }
 
-function isReplayableHand(item) {
-  if (!item) {
-    return false;
-  }
-  const phase = String(item.phase || "").toLowerCase();
-  return phase === "ended"
-    || phase === "hand_ended"
-    || Boolean(item.ended_at)
-    || Boolean((item.winners || []).length);
-}
-
-function rebuildSeatChats() {
+function rebuildSeatChatsFromSessionEvents() {
   const handMeta = new Map();
   const currentHand = currentState?.current_hand;
   if (currentHand?.hand_id) {
@@ -580,6 +779,31 @@ function rebuildSeatChats() {
     });
   });
 
+  Object.keys(bySeat).forEach((seatId) => {
+    bySeat[seatId] = bySeat[seatId].reverse();
+  });
+  recentSeatChats = bySeat;
+}
+
+function rebuildSeatChatsFromCurrentState() {
+  const hand = currentState?.current_hand;
+  const bySeat = {};
+  (hand?.chat_messages || []).forEach((item) => {
+    if (!item.speaker_id) {
+      return;
+    }
+    if (!bySeat[item.speaker_id]) {
+      bySeat[item.speaker_id] = [];
+    }
+    bySeat[item.speaker_id].push({
+      event_id: item.event_id,
+      hand_id: hand?.hand_id,
+      hand_no: hand?.hand_no,
+      street: hand?.street,
+      created_at: item.created_at,
+      text: item.text || "",
+    });
+  });
   Object.keys(bySeat).forEach((seatId) => {
     bySeat[seatId] = bySeat[seatId].reverse();
   });
@@ -696,7 +920,7 @@ function renderBoardAndSeats(hand) {
         <div class="badge-row">${seatBadges(hand, seat)}</div>
       </div>
       <div class="seat-body">
-        ${renderCardRow(seat.hole_cards)}
+        ${seat.hole_cards_visible === false ? renderFaceDownCardRow() : renderCardRow(seat.hole_cards)}
         ${renderSeatSpeech(seat.seat_id)}
       </div>
       ${resultBlock}
@@ -706,13 +930,25 @@ function renderBoardAndSeats(hand) {
 }
 
 function renderActions(hand) {
+  const preservedAmountDraft = !amountBox.classList.contains("hidden") ? actionAmount.value : undefined;
+  const preservedActionSpec = findMatchingActionSpec(hand, selectedActionSpec);
   actionButtons.innerHTML = "";
-  resetAmountAction();
+
   if (!hand) {
+    resetAmountAction();
     actionMeta.textContent = "🎮 当前没有 hand。";
     return;
   }
+
+  if (!sessionUserParticipates && sessionId) {
+    resetAmountAction();
+    actionMeta.textContent = "👀 当前为旁观模式，这个页面不提供动作操作。";
+    showActionHint("旁观模式下可查看当前对局与历史回放，但不能在本页面提交动作。");
+    return;
+  }
+
   if (!hand.actor_id && !(hand.available_actions || []).length) {
+    resetAmountAction();
     actionMeta.innerHTML = `
       <strong>🏁 本手已结束</strong>
       <br>
@@ -727,9 +963,35 @@ function renderActions(hand) {
     );
     return;
   }
-  hideActionHint();
+
+  const viewer = currentState?.viewer;
+  if (!viewer) {
+    resetAmountAction();
+    actionMeta.textContent = "🎮 当前未绑定玩家视角。";
+    showActionHint("请使用“用户参与”模式创建或载入会话后，再在这里操作。");
+    return;
+  }
+
+  if (!viewer.can_act) {
+    resetAmountAction();
+    actionMeta.innerHTML = `
+      <strong>🙋 当前用户：</strong> ${escapeHtml(sessionUserName)}
+      <br>
+      <strong>🎯 当前行动者：</strong> ${escapeHtml(seatDisplayWithNo(hand.actor_id || "", hand.seats || []))}
+    `;
+    if (viewer.is_folded) {
+      showActionHint("你已在本手弃牌，当前只能继续聊天并等待本手结束。");
+    } else {
+      showActionHint("当前还没有轮到你行动，等待其它玩家通过外部客户端或 API 继续推进。");
+    }
+    return;
+  }
+
+  if (!preservedActionSpec) {
+    resetAmountAction();
+  }
   actionMeta.innerHTML = `
-    <strong>🎯 当前行动者：</strong> ${escapeHtml(seatDisplayWithNo(hand.actor_id || "", hand.seats || []))}
+    <strong>🙋 当前用户：</strong> ${escapeHtml(sessionUserName)}
     <br>
     <strong>📞 需跟注：</strong> ${hand.to_call ?? "-"}
     · <strong>💰 最小下注：</strong> ${hand.min_bet_to ?? "-"}
@@ -742,37 +1004,35 @@ function renderActions(hand) {
     button.addEventListener("click", () => handleActionChoice(action));
     actionButtons.appendChild(button);
   });
+  if (preservedActionSpec && isAmountAction(preservedActionSpec.action)) {
+    showAmountAction(preservedActionSpec, preservedAmountDraft);
+    return;
+  }
+  hideActionHint();
+}
+
+function renderSpeakerDisplay() {
+  if (!sessionUserParticipates || !sessionId) {
+    speakerNameDisplay.textContent = "💬 当前没有用户参与";
+    return;
+  }
+  speakerNameDisplay.textContent = `💬 当前发言人：${sessionUserName}`;
 }
 
 function handleActionChoice(actionSpec) {
-  if (actionSpec.action === "bet" || actionSpec.action === "raise") {
-    selectedActionSpec = actionSpec;
-    amountBox.classList.remove("hidden");
-    actionAmount.min = actionSpec.min ?? 0;
-    actionAmount.max = actionSpec.max ?? "";
-    actionAmount.value = actionSpec.default ?? actionSpec.min ?? "";
-    selectedActionHint.innerHTML = `🧠 已选择 <strong>${actionLabel(actionSpec.action)}</strong>，请输入 ${actionSpec.min ?? "-"} ~ ${actionSpec.max ?? "-"} 的金额后确认。`;
-    selectedActionHint.classList.remove("hidden");
+  if (isAmountAction(actionSpec.action)) {
+    showAmountAction(actionSpec);
     return;
   }
   submitAction(actionSpec).catch((error) => showBanner(error.message));
 }
 
-function resetAmountAction() {
-  selectedActionSpec = null;
-  amountBox.classList.add("hidden");
-  actionAmount.value = "";
-  actionAmount.min = 0;
-  actionAmount.max = "";
-  hideActionHint();
-}
-
 async function submitAction(actionSpec, amountOverride = null) {
-  if (!sessionId || !currentState?.current_hand?.actor_id) {
+  if (!sessionId || !sessionUserParticipates || !sessionUserName) {
     return;
   }
   const payload = {
-    actor_id: currentState.current_hand.actor_id,
+    actor_name: sessionUserName,
     action: actionSpec.action,
   };
   if (actionSpec.action === "bet" || actionSpec.action === "raise") {
@@ -785,23 +1045,8 @@ async function submitAction(actionSpec, amountOverride = null) {
   resetAmountAction();
   const state = await refreshState();
   await refreshHistory();
-  await loadRecentEvents();
   if (state?.phase === "hand_ended" && state.current_hand?.hand_id) {
     await loadReplay(state.current_hand.hand_id);
-  }
-}
-
-function renderSpeakerOptions(hand) {
-  const selectedValue = speakerId.value;
-  const seats = hand?.seats || [];
-  speakerId.innerHTML = seats
-    .map(
-      (seat) =>
-        `<option value="${escapeHtml(seat.seat_id)}">💬 ${escapeHtml(seat.display_name)} · ${seatNoLabel(seat.seat_no)}</option>`
-    )
-    .join("");
-  if (selectedValue && seats.some((seat) => seat.seat_id === selectedValue)) {
-    speakerId.value = selectedValue;
   }
 }
 
@@ -874,6 +1119,10 @@ function currentTimelineEvents() {
 
 function renderTimeline() {
   timeline.innerHTML = "";
+  if (sessionUserParticipates && sessionId) {
+    timeline.innerHTML = '<div class="empty-state">🙈 用户参与模式下不显示当前手时间线。</div>';
+    return;
+  }
   const events = currentTimelineEvents();
   if (!events.length) {
     timeline.innerHTML = currentState?.current_hand?.hand_id
@@ -884,11 +1133,55 @@ function renderTimeline() {
   events.forEach((event) => appendTimeline(event));
 }
 
+function isReplayableHand(item) {
+  if (!item) {
+    return false;
+  }
+  const phase = String(item.phase || "").toLowerCase();
+  return phase === "ended"
+    || phase === "hand_ended"
+    || Boolean(item.ended_at)
+    || Boolean((item.winners || []).length);
+}
+
+function renderState(data) {
+  currentState = data;
+  applySessionContext(data);
+  lastEventId = data.last_event_id;
+  updateHandIndex();
+  if (sessionUserParticipates) {
+    rebuildSeatChatsFromCurrentState();
+  }
+  syncLayoutVisibility();
+  const nextSessionMetaSignature = sessionMetaSignature(data);
+  if (renderSignatures.sessionMeta !== nextSessionMetaSignature) {
+    setSessionMeta(data);
+    renderSignatures.sessionMeta = nextSessionMetaSignature;
+  }
+  updateStartHandButton(data);
+  const nextBoardSignature = boardRenderSignature(data.current_hand);
+  if (renderSignatures.board !== nextBoardSignature) {
+    renderBoardAndSeats(data.current_hand);
+    renderSignatures.board = nextBoardSignature;
+  }
+  const nextActionSignature = actionRenderSignature(data);
+  if (renderSignatures.actions !== nextActionSignature) {
+    renderActions(data.current_hand);
+    renderSignatures.actions = nextActionSignature;
+  }
+  const nextSpeakerSignature = speakerRenderSignature();
+  if (renderSignatures.speaker !== nextSpeakerSignature) {
+    renderSpeakerDisplay();
+    renderSignatures.speaker = nextSpeakerSignature;
+  }
+  return data;
+}
+
 async function refreshState() {
   if (!sessionId) {
-    return;
+    return null;
   }
-  const data = await api(`/api/v1/sessions/${sessionId}/state`);
+  const data = await api(buildStatePath(sessionId));
   renderState(data);
   return data;
 }
@@ -943,7 +1236,8 @@ async function refreshHistory() {
 }
 
 async function loadRecentEvents() {
-  if (!sessionId) {
+  if (!sessionId || sessionUserParticipates) {
+    renderTimeline();
     return [];
   }
   const sinceEventId = Math.max(0, lastEventId - 200);
@@ -952,7 +1246,7 @@ async function loadRecentEvents() {
   );
   rememberSessionEvents(data.events, true);
   renderTimeline();
-  rebuildSeatChats();
+  rebuildSeatChatsFromSessionEvents();
   renderBoardAndSeats(currentState?.current_hand);
   return data.events || [];
 }
@@ -964,11 +1258,18 @@ async function activateSession(targetSessionId, successMessage = "") {
     return null;
   }
 
-  const state = await api(`/api/v1/sessions/${normalized}/state`);
+  const bootstrap = await api(`/api/v1/sessions/${normalized}/state`);
+  const initialUserParticipates = Boolean(bootstrap.user_participates);
+  const initialUserName = initialUserParticipates ? resolveUserNameFromState(bootstrap) : "";
+  const state = initialUserParticipates
+    ? await api(buildStatePath(normalized, initialUserParticipates, initialUserName))
+    : bootstrap;
+
   handIndex = new Map();
   sessionEvents = [];
   recentSeatChats = {};
   sessionId = normalized;
+  resetRenderSignatures();
   renderState(state);
   hydrateSessionForm(state);
   await refreshHistory();
@@ -978,8 +1279,7 @@ async function activateSession(targetSessionId, successMessage = "") {
   if (state.phase === "hand_ended" && state.current_hand?.hand_id) {
     await loadReplay(state.current_hand.hand_id);
   } else {
-    replayView.innerHTML = '<div class="empty-state">🪄 选择一手已结束牌局查看回放。</div>';
-    replayView.dataset.handId = "";
+    resetReplayPlaceholder("🪄 选择一手已结束牌局查看回放。");
   }
 
   if (successMessage) {
@@ -1075,7 +1375,7 @@ function renderReplay(data) {
 
 async function loadReplay(handId) {
   try {
-    const data = await api(`/api/v1/replays/${handId}`);
+    const data = await api(buildReplayPath(handId));
     renderReplay(data);
     replayView.scrollTop = 0;
   } catch (error) {
@@ -1083,7 +1383,7 @@ async function loadReplay(handId) {
   }
 }
 
-async function pollEvents() {
+async function pollPublicEvents() {
   if (!sessionId) {
     return;
   }
@@ -1105,15 +1405,36 @@ async function pollEvents() {
     if (needsStateRefresh) {
       const state = await refreshState();
       await refreshHistory();
-      if (state?.phase === "hand_ended") {
-        if (state.current_hand?.hand_id && replayView.dataset.handId !== state.current_hand.hand_id) {
+      if (state?.phase === "hand_ended" && state.current_hand?.hand_id) {
+        if (replayView.dataset.handId !== state.current_hand.hand_id) {
           await loadReplay(state.current_hand.hand_id);
         }
       }
     }
     renderTimeline();
-    rebuildSeatChats();
+    rebuildSeatChatsFromSessionEvents();
     renderBoardAndSeats(currentState?.current_hand);
+  } catch (error) {
+    showBanner(error.message);
+  }
+}
+
+async function pollParticipantView() {
+  if (!sessionId) {
+    return;
+  }
+  try {
+    const data = await api(buildStatePath(sessionId));
+    if (participantPollSignature(currentState) === participantPollSignature(data)) {
+      return;
+    }
+    const state = renderState(data);
+    await refreshHistory();
+    if (state?.phase === "hand_ended" && state.current_hand?.hand_id) {
+      if (replayView.dataset.handId !== state.current_hand.hand_id) {
+        await loadReplay(state.current_hand.hand_id);
+      }
+    }
   } catch (error) {
     showBanner(error.message);
   }
@@ -1121,7 +1442,16 @@ async function pollEvents() {
 
 function startPolling() {
   clearInterval(pollHandle);
-  pollHandle = setInterval(pollEvents, pollInterval);
+  if (!sessionId) {
+    return;
+  }
+  pollHandle = setInterval(() => {
+    if (sessionUserParticipates) {
+      pollParticipantView();
+      return;
+    }
+    pollPublicEvents();
+  }, pollInterval);
 }
 
 submitAmountAction.addEventListener("click", () => {
@@ -1137,12 +1467,13 @@ createSessionForm.addEventListener("submit", async (event) => {
   const form = new FormData(event.currentTarget);
   const payload = {
     session_id: form.get("session_id") || null,
-    seat_count: Number(form.get("seat_count")),
+    seat_count: clampSeatCount(form.get("seat_count"), userParticipatesToggle.checked),
     small_blind: Number(form.get("small_blind")),
     big_blind: Number(form.get("big_blind")),
     starting_stack: Number(form.get("starting_stack")),
     seed: form.get("seed") === "" ? null : Number(form.get("seed")),
-    seat_names: collectSeatNames(),
+    user_participates: userParticipatesToggle.checked,
+    seat_names: previewSeatNames(),
   };
   try {
     const data = await api("/api/v1/sessions", {
@@ -1179,8 +1510,7 @@ document.getElementById("startHandForm").addEventListener("submit", async (event
     await refreshState();
     await refreshHistory();
     await loadRecentEvents();
-    replayView.innerHTML = '<div class="empty-state">🪄 当前手正在进行，回放会在本手结束后生成。</div>';
-    replayView.dataset.handId = "";
+    resetReplayPlaceholder("🪄 当前手正在进行，回放会在本手结束后生成。");
   } catch (error) {
     showBanner(error.message);
   }
@@ -1188,20 +1518,20 @@ document.getElementById("startHandForm").addEventListener("submit", async (event
 
 document.getElementById("chatForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!sessionId) {
-    showBanner("请先创建或载入牌桌");
+  if (!sessionId || !sessionUserParticipates || !sessionUserName) {
+    showBanner("当前模式不支持在本页面发送聊天");
     return;
   }
   try {
     await api(`/api/v1/sessions/${sessionId}/chat`, {
       method: "POST",
       body: JSON.stringify({
-        speaker_id: speakerId.value,
+        speaker_name: sessionUserName,
         text: document.getElementById("chatText").value,
       }),
     });
     document.getElementById("chatText").value = "";
-    await loadRecentEvents();
+    await refreshState();
   } catch (error) {
     showBanner(error.message);
   }
@@ -1211,6 +1541,31 @@ document.getElementById("refreshBtn").addEventListener("click", () => {
   refreshState().catch((error) => showBanner(error.message));
   refreshHistory().catch((error) => showBanner(error.message));
   loadRecentEvents().catch((error) => showBanner(error.message));
+});
+
+copySessionBtn.addEventListener("click", async () => {
+  if (!sessionId) {
+    showBanner("当前没有可复制的牌桌编号");
+    return;
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(sessionId);
+    } else {
+      const fallbackInput = document.createElement("input");
+      fallbackInput.value = sessionId;
+      fallbackInput.setAttribute("readonly", "readonly");
+      fallbackInput.style.position = "fixed";
+      fallbackInput.style.opacity = "0";
+      document.body.appendChild(fallbackInput);
+      fallbackInput.select();
+      document.execCommand("copy");
+      fallbackInput.remove();
+    }
+    showBanner(`已复制牌桌编号 ${sessionId}`);
+  } catch (error) {
+    showBanner("复制失败，请手动复制牌桌编号");
+  }
 });
 
 randomSessionBtn.addEventListener("click", () => {
@@ -1227,7 +1582,16 @@ loadSessionBtn.addEventListener("click", () => {
   );
 });
 
-seatCountInput.addEventListener("input", renderSeatNameInputs);
-seatNamesList.addEventListener("input", syncSeatNameDrafts);
-renderSeatNameInputs();
-renderSessionOverview(null);
+seatCountInput.addEventListener("input", renderCreationForm);
+userParticipatesToggle.addEventListener("change", () => {
+  botNameOrder = shuffleArray(configuredBotNames);
+  renderCreationForm();
+});
+userNameInput.addEventListener("input", renderCreationForm);
+
+renderCreationForm();
+syncLayoutVisibility();
+updateStartHandButton(null);
+renderActions(null);
+renderSpeakerDisplay();
+renderTimeline();

@@ -73,6 +73,13 @@ button {
   font-size: 14px;
 }
 
+.hero-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .page-shell {
   display: grid;
   gap: 18px;
@@ -149,6 +156,78 @@ button {
   grid-column: 1 / -1;
 }
 
+.toggle-card {
+  display: grid;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(13, 122, 82, 0.14);
+  background: rgba(13, 122, 82, 0.05);
+}
+
+.toggle-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+}
+
+.toggle-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.toggle-copy strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.toggle-copy span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.switch-input {
+  appearance: none;
+  width: 54px;
+  min-width: 54px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid rgba(13, 122, 82, 0.18);
+  background: rgba(95, 109, 97, 0.18);
+  position: relative;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.switch-input::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 4px 10px rgba(29, 36, 27, 0.18);
+  transition: transform 160ms ease;
+}
+
+.switch-input:checked {
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  border-color: rgba(7, 76, 52, 0.3);
+}
+
+.switch-input:checked::after {
+  transform: translateX(23px);
+}
+
+.switch-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(13, 122, 82, 0.12);
+}
+
 .session-setup-grid {
   display: grid;
   gap: 14px;
@@ -215,6 +294,30 @@ button {
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
+.seat-plan-item {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(13, 122, 82, 0.14);
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.seat-plan-item.user {
+  background: rgba(13, 122, 82, 0.08);
+  border-color: rgba(13, 122, 82, 0.24);
+}
+
+.seat-plan-role {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.seat-plan-name {
+  color: var(--ink);
+  font-weight: 800;
+}
+
 .seat-name-item {
   gap: 6px;
   font-size: 12px;
@@ -234,6 +337,10 @@ button {
 .form-helper {
   color: var(--muted);
   font-size: 12px;
+}
+
+.bot-name-pool {
+  margin-top: 2px;
 }
 
 .session-quick-panel {
@@ -286,6 +393,13 @@ button {
 
 .start-hand-form {
   display: grid;
+}
+
+.start-hand-only-panel {
+  justify-self: start;
+  min-width: min(100%, 340px);
+  padding: 14px 16px;
+  border-radius: 18px;
 }
 
 .start-hand-form button {
@@ -343,6 +457,13 @@ button {
   color: var(--accent-strong);
   border: 1px solid rgba(13, 122, 82, 0.18);
   box-shadow: none;
+}
+
+.compact-ghost {
+  padding: 7px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .inline-input .inline-btn {
@@ -650,6 +771,18 @@ select {
   overflow: hidden;
 }
 
+.playing-card.card-back {
+  background: linear-gradient(180deg, #f7f1e5, #efe2c8);
+  border-color: rgba(196, 168, 112, 0.42);
+}
+
+.playing-card.card-back img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .playing-card.red {
   color: #c22c2c;
 }
@@ -873,6 +1006,12 @@ select {
   color: var(--muted);
 }
 
+.compact-meta {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+}
+
 .interaction-grid > .panel {
   display: grid;
   align-content: start;
@@ -914,6 +1053,10 @@ select {
 .replay-view {
   display: grid;
   gap: 12px;
+}
+
+.bottom-grid.participant-bottom-grid {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
 }
 
 .timeline-item,
@@ -1070,6 +1213,10 @@ select {
     grid-template-columns: 1fr;
   }
 
+  .bottom-grid.participant-bottom-grid {
+    grid-template-columns: 1fr;
+  }
+
   .session-setup-grid {
     grid-template-columns: 1fr;
   }
@@ -1121,6 +1268,10 @@ select {
   .inline-input,
   .inline-input.dual-action {
     grid-template-columns: 1fr;
+  }
+
+  .toggle-row {
+    align-items: flex-start;
   }
 
   .seat-name-head,
